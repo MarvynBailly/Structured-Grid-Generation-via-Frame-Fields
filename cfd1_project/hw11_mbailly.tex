@@ -262,7 +262,7 @@ In this section we introduce the mathematical formulation and implementation det
 \subsubsection{Mathematical Formulation}
 A frame field is a $N$-symmetry direction field (Ray et al. 2008b) where at each point in the domain, $N$ directions are defined that are symmetric under rotation by $2\pi/N$ around the point of interest. For quadrilateral meshing, we are interested in 4-symmetry frame fields, or cross fields, where $N=4$. The frame field is represented by an angle-field $\theta: F \mapsto \mathbb{R}$ which assigns an angle $\theta_f$ to each face $f \in F$ of the triangular mesh and a period-jump field $p: E \mapsto \mathbb{Z}$ which assigns an integer period-jump $p_e$ to each edge $e \in E$ of the mesh.  
 
-The idea is that for each face $f$, we can define a local frame of reference by rotating a reference edge $e$ along the $x$-axis. Then the four directions of the frame at face $f$ are given by rotating this reference edge by angles $\theta_f + k \cdot \pi/2$ for $k = 0, 1, 2, 3$. The period-jump field $p_e$ determines which direction in face $f_1$ corresponds to which direction in the adjacent face $f_2$ across edge $e$. Specifically, the direction in face $f_2$ that aligns with the reference edge is given by $\theta_{f_2} + p_e \cdot \pi/2$.
+The idea is that for each face $f$, we can define a local frame of reference by rotating a reference edge $e$ along the $x$-axis. Then the four directions of the frame at face $f$ are given by rotating this reference edge by angles $\theta_f + k \cdot \pi/2$ for $k = 0, 1, 2, 3$. This is visualized in Figure \ref{fig:frame_field_combined} \ref{sub@fig:frame_field}. The period-jump field $p_e$ determines which direction in face $f_1$ corresponds to which direction in the adjacent face $f_2$ across edge $e$. Specifically, the direction in face $f_2$ that aligns with the reference edge is given by $\theta_{f_2} + p_e \cdot \pi/2$. This relationship is illustrated in Figure \ref{fig:frame_field_combined} \ref{sub@fig:period_jump}.
 
 \begin{figure}[H]
 \centering
@@ -392,7 +392,47 @@ The idea is that for each face $f$, we can define a local frame of reference by 
 \label{fig:frame_field_combined}
 \end{figure}
 
+
+
+\subsubsection{Constructing a Smooth Frame Field}
+The smoothness of a unit frame field can be measured by the angular difference between faces:
+\begin{equation}\label{eq:smooth_energy}
+    E_\text{smooth} = \sum_{e_{ij} \in E} \left(\theta_i + \kappa_{ij} + \frac{2\pi}{N} p_{ij} - \theta_j\right)^2,
+\end{equation}
+where $\theta_i$, and $\theta_j$ are the angles of trangle $i$ and $j$ to it's respective reference edge, $\kappa_{ij} \in (-\pi, \pi]$ is the angle between the reference edges of triangles $i$ and $j$, $p_{ij}$ is the integer period-jump across edge $e_{ij}$, and $N=4$ for quadrilateral meshing.
+
+The cross field index of a vertex $v$ is defined as:
+\begin{equation}
+    I(v) = I_0(v) + \sum_{e_{ij} \in \text{star}(v)} \frac{p_{ij}}{4},
+\end{equation}
+where $I_0(v)$ is the initial index determined by the geometry of the mesh 
+\begin{equation}
+    I_0(v) =  \frac{1}{2\pi} \left( A_d(v) + \sum_{e_{ij} \in \text{star}(v)} \kappa_{ij} \right),
+\end{equation}
+where $A_d(v)$ is the angle defect at vertex $v$ and $\text{star}(v)$ is the set of edges incident to vertex $v$. Ray et. al. (2008b) show that vertices with non-zero index correspond to singularities in the frame field which will later correspond to irregular vertices in the quadrilateral mesh. The index will be an multiple of $1/4$ and determine the valence of the irregular vertex in the quad mesh e.g., an index of $+1/4$ corresponds to a vertex with valence 3 while an index of $-1/4$ corresponds to a vertex with valence 5.
+
+\subsubsection{Finding a Smooth Frame Field}
+The problem we wish to solve is given a triangular mesh $M$ and a subset of faces $F_c \subset F$ with constrained direction $\theta_i = \hat{\theta}_i$ for $i \in F_c$, we search for a smooth frame field by minimizing the energy given by equation \ref{eq:smooth_energy}. That is, we wish to solve for $\theta_i$ and $p_{ij}$, which minimize $E_\text{smooth}$ subject to the constraints $\theta_i = \hat{\theta}_i$ for $i \in F_c$. This is a mixed-integer problem since $\theta_i$ are real-valued while $p_{ij}$ are integers.
+
+To reduce the problem space, we can take advantage of the invaraiance under rotation of the frame field. Following the work of Bommes et al. (2009), the minimization problem can be mind unique by fixing one period jump variable to zero per triangle. In order to not change the value of the energy, we take care not to fix edges whose dual paths connect two constrained faces, or closes loops. To generate a valid set of edges whose period jumps may be fixed, we construct a Dijkstra tree over the dual graph of the triangular mesh, starting from the constrained faces. 
+
+\subsubsection{Implementation Details}
+To implement the frame field generation, we first construct the Dijkstra tree to identify edges whose period jumps can be fixed. We then set up the minimization problem by taking the derivative of the energy function with respect to each variable, leading to a system of linear equations for the real-valued variables $\theta$ and integer constraints for the period jumps $p$. The resulting equations are as follows:
+\begin{equation}
+    \begin{aligned}
+    \frac{\partial E_\text{smooth}}{\partial \theta_k} &= \sum_{e_{kj} \in \text{star}(v)} 2 \left(\theta_k + \kappa_{kj} + \frac{\pi}{2} p_{kj}  - \theta_j \right) = 0, \\
+    \frac{\partial E_\text{smooth}}{\partial p_{ij}} &= \pi\left( \theta_i + \kappa_{ij} + \frac{\pi}{2} p_{ij} - \theta_j \right) = 0. 
+    \end{aligned}
+\end{equation}
+For all variables that are not fixed, we assemble a row in a single matrix that we pass to the greedy mixed-integer solver described earlier. The solver returns the optimal $\theta$ and $p$ values which define the smooth frame field over the triangular mesh adhering to the user-defined constraints on $F_c$.
+
+
+
+
 \subsection{Quadrilateral Mesh Extraction}
+
+
+
 
 
 
@@ -423,9 +463,7 @@ The idea is that for each face $f$, we can define a local frame of reference by 
 \section{Julia Code Listings}
 \label{app:code}
 
-% \lstinputlisting[language=Julia, caption={Example Code}, label={lst:example}]{code/example.jl}
-
-\clearpage
+All code used in this project is available at the following GitHub repository: \url{https://github.com/MarvynBailly/Structured-Grid-Generation-via-Frame-Fields}.
 
 \section{Reference Paper}
 \label{app:paper}
