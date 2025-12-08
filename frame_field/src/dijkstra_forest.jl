@@ -3,6 +3,96 @@
 
 using DataStructures
 using GeometryBasics
+using LinearAlgebra
+
+"""
+    identify_boundary_faces_and_angles(mesh::GeometryBasics.Mesh) -> (Vector{Int}, Vector{Float64})
+
+Identify all boundary faces and compute their target angles based on boundary tangent directions.
+
+For each face on the boundary, computes the angle of the boundary edge tangent.
+This angle will be used as a hard constraint to align the frame field with the boundary.
+
+# Returns
+- `boundary_faces::Vector{Int}` - Indices of faces incident to boundary edges
+- `boundary_angles::Vector{Float64}` - Target angles for each boundary face (in radians)
+"""
+function identify_boundary_faces_and_angles(mesh::GeometryBasics.Mesh)
+    faces_list = decompose(TriangleFace{Int}, mesh)
+    vs = coordinates(mesh)
+    n_faces = length(faces_list)
+    
+    # Build edge to faces mapping
+    edge_to_faces = Dict{Tuple{Int,Int}, Vector{Int}}()
+    face_to_edges = Dict{Int, Vector{Tuple{Int,Int}}}()
+    
+    for (f_idx, face) in enumerate(faces_list)
+        verts = (face[1], face[2], face[3])
+        face_edges = Tuple{Int,Int}[]
+        
+        for k in 1:3
+            v1, v2 = verts[k], verts[mod1(k+1, 3)]
+            edge = v1 < v2 ? (v1, v2) : (v2, v1)
+            push!(face_edges, edge)
+            
+            if !haskey(edge_to_faces, edge)
+                edge_to_faces[edge] = Int[]
+            end
+            push!(edge_to_faces[edge], f_idx)
+        end
+        
+        face_to_edges[f_idx] = face_edges
+    end
+    
+    # Find boundary edges (edges with only one incident face)
+    boundary_edges = Set{Tuple{Int,Int}}()
+    for (edge, incident_faces) in edge_to_faces
+        if length(incident_faces) == 1
+            push!(boundary_edges, edge)
+        end
+    end
+    
+    if isempty(boundary_edges)
+        return Int[], Float64[]
+    end
+    
+    # For each boundary face, compute the angle of its boundary edge
+    boundary_face_angles = Dict{Int, Float64}()
+    
+    for (f_idx, edges) in face_to_edges
+        # Find which edge(s) of this face are on the boundary
+        boundary_edge_of_face = nothing
+        for edge in edges
+            if edge in boundary_edges
+                boundary_edge_of_face = edge
+                break
+            end
+        end
+        
+        if boundary_edge_of_face !== nothing
+            # Compute tangent direction of boundary edge
+            v1_idx, v2_idx = boundary_edge_of_face
+            p1 = vs[v1_idx]
+            p2 = vs[v2_idx]
+            
+            # Tangent vector (in 2D projection)
+            tangent = Point2f(p2[1] - p1[1], p2[2] - p1[2])
+            tangent_normalized = normalize(tangent)
+            
+            # Compute angle of tangent
+            angle = atan(tangent_normalized[2], tangent_normalized[1])
+            
+            # Store this as the constraint for this boundary face
+            boundary_face_angles[f_idx] = angle
+        end
+    end
+    
+    # Convert to vectors
+    boundary_faces = collect(keys(boundary_face_angles))
+    boundary_angles = [boundary_face_angles[f] for f in boundary_faces]
+    
+    return boundary_faces, boundary_angles
+end
 
 """
     compute_spanning_forest(mesh::GeometryBasics.Mesh; constrained_faces=nothing)
