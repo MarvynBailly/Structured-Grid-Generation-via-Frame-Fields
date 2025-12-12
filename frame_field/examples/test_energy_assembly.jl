@@ -1,4 +1,5 @@
 include("../src/meshio.jl")
+include("../src/mesh_types.jl")
 include("../src/dijkstra_forest.jl")
 include("../src/cross_field_energy.jl")
 
@@ -8,8 +9,9 @@ using CairoMakie
 
 println("=== Energy Matrix Assembly Test ===\n")
 
+# casename = "simplest-square"
 # casename = "simple-square"
-casename = "300_polygon_sphere_100mm"
+# casename = "300_polygon_sphere_100mm"
 
 
 # Load mesh (path relative to root project directory)
@@ -20,6 +22,15 @@ mesh = load_triangulation(mesh_path)
 fs = faces(mesh)
 n_faces = length(fs)
 println("  Faces: $n_faces")
+
+# Build topology and create frame field
+println("\nBuilding mesh topology...")
+topology = build_mesh_topology(mesh)
+println("  Internal edges: $(length([1 for i in 1:topology.n_faces for (j,_) in topology.dual_adj[i] if i < j]))")
+
+println("\nCreating frame field...")
+field = CrossField(topology)
+println("  Transport angles computed: $(length(field.transport_angles))")
 
 # Set up constraints (optional - empty for now)
 constrained_faces = Int[1, 5]  # Example: constrain faces 1 and 5
@@ -38,8 +49,7 @@ println("  Fixed edges selected: $(length(fixed_edges_per_face))")
 # Assemble system matrix
 println("\nAssembling system matrix...")
 A, b, var_to_p, var_to_theta = assemble_system_matrix(
-    mesh, 
-    potential_fixed_edges, 
+    field, 
     fixed_edges_per_face,
     constrained_faces,
     constrained_angles,

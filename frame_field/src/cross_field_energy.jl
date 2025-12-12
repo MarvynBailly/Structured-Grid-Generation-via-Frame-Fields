@@ -16,48 +16,28 @@ using GeometryBasics
 using Statistics
 
 """
-    compute_smoothness_energy(
-        mesh::Mesh,
-        edge_to_faces::Dict{Int, Vector{Int}},
-        dual_adj::Dict{Int, Vector{Tuple{Int, Tuple{Int, Int}}}},
-        kappa::Dict{Tuple{Int, Int}, Float64},
-        theta::Vector{Float64},
-        p::Dict{Tuple{Int, Int}, Int}
-    ) -> Float64
+    compute_smoothness_energy(field::CrossField) -> Float64
 
 Compute the frame field smoothness energy.
 
 # Arguments
-- `mesh` - Triangular mesh
-- `edge_to_faces` - Map from edge index to adjacent face indices
-- `dual_adj` - Dual graph adjacency: face → [(neighbor_face, edge)]
-- `kappa` - Transport angles κ_ij for each face pair (i,j)
-- `theta` - Face angles (length = n_faces)
-- `p` - Period jumps indexed by edge (vertex pair tuple)
+- `field::CrossField` - Frame field with topology, angles, and period jumps
 
 # Returns
 - Energy value E = Σ (θ_i + κ_ij + (π/2)p_ij - θ_j)²
 """
-function compute_smoothness_energy(
-    mesh::Mesh,
-    edge_to_faces::Dict{Int, Vector{Int}},
-    dual_adj::Dict{Int, Vector{Tuple{Int, Tuple{Int, Int}}}},
-    kappa::Dict{Tuple{Int, Int}, Float64},
-    theta::Vector{Float64},
-    p::Dict{Tuple{Int, Int}, Int}
-)
+function compute_smoothness_energy(field::CrossField)
     energy = 0.0
-    fs = faces(mesh)
-    n_faces = length(fs)
+    n_faces = field.topology.n_faces
     
     # Sum over all edges (count each once)
     for face_i in 1:n_faces
-        for (face_j, edge) in dual_adj[face_i]
+        for (face_j, edge) in field.topology.dual_adj[face_i]
             if face_i < face_j  # Count each edge once
-                kappa_ij = kappa[(face_i, face_j)]
-                p_ij = get(p, edge, 0)
+                kappa_ij = get_transport_angle(field, face_i, face_j)
+                p_ij = get_period_jump(field, face_i, face_j)
                 
-                diff = theta[face_i] + kappa_ij + (π/2) * p_ij - theta[face_j]
+                diff = field.theta[face_i] + kappa_ij + (π/2) * p_ij - field.theta[face_j]
                 energy += diff^2
             end
         end
@@ -113,8 +93,7 @@ end
 
 """
     assemble_system_matrix(
-        mesh::Mesh,
-        potential_fixed_edges::Set{Tuple{Int, Int}},
+        field::CrossField,
         fixed_edges_per_face::Dict{Int, Tuple{Int, Int}},
         constrained_faces::Vector{Int}=Int[],
         constrained_angles::Vector{Float64}=Float64[]
@@ -129,16 +108,15 @@ Creates equations for all variables (both free and constrained):
 - For constrained faces: θ_k = fixed_value
 
 # Arguments
-- `mesh` - Triangular mesh
-- `potential_fixed_edges` - Edges in spanning forest (from compute_spanning_forest)
-- `fixed_edges_per_face` - Dict mapping face_idx → edge to fix (from fixed_suitable_edges)
+- `field::CrossField` - Frame field with topology, angles, and transport angles
+- `fixed_edges_per_face` - Dict mapping face_idx → edge to fix (from fix_suitable_edges)
 - `constrained_faces` - Face indices with fixed angles
 - `constrained_angles` - Corresponding angle values
 
 # Returns
 - `A::SparseMatrixCSC` - Sparse system matrix (n_vars × n_vars)
 - `b::Vector{Float64}` - Right-hand side vector
-- `var_to_p::Dict{Int, Tuple{Int,Int}}` - Maps variable index → edge (for period jumps)
+- `var_to_p::Dict{Int, Tuple{Int,Int}}` - Maps variable index → (face_i, face_j) pair
 - `var_to_theta::Dict{Int, Int}` - Maps variable index → face index (for angles)
 
 # Variable Ordering
@@ -149,75 +127,23 @@ Variables are ordered as: [p_free; p_fixed; θ_free; θ_constrained]
 - Last n_constrained_theta variables: angles on constrained faces
 """
 function assemble_system_matrix(
-    mesh::Mesh,
-    potential_fixed_edges::Set{Tuple{Int, Int}},
+    field::CrossField,
     fixed_edges_per_face::Dict{Int, Tuple{Int, Int}},
     constrained_faces::Vector{Int}=Int[],
     constrained_angles::Vector{Float64}=Float64[],
     debug::Bool=false
 )
-    fs = faces(mesh)
-    vs = coordinates(mesh)
-    n_faces = length(fs)
+    # Extract topology from field
+    topology = field.topology
+    n_faces = topology.n_faces
+    dual_adj = topology.dual_adj
     
-    # Build topology
-    edge_map = Dict{Tuple{Int, Int}, Int}()
-    edge_to_faces = Dict{Int, Vector{Int}}()
-    dual_adj = Dict{Int, Vector{Tuple{Int, Tuple{Int, Int}}}}()
-    
-    edge_idx = 0
-    for i in 1:n_faces
-        dual_adj[i] = []
-    end
-    
-    # Build edge map and face adjacency
-    for (i, face_i) in enumerate(fs)
-        verts_i = [face_i[1], face_i[2], face_i[3]]
-        
-        for (j, face_j) in enumerate(fs)
-            if i >= j
-                continue
-            end
-            
-            verts_j = [face_j[1], face_j[2], face_j[3]]
-            shared = intersect(verts_i, verts_j)
-            
-            if length(shared) == 2
-                v1, v2 = shared[1], shared[2]
-                edge = v1 < v2 ? (v1, v2) : (v2, v1)
-                
-                if !haskey(edge_map, edge)
-                    edge_idx += 1
-                    edge_map[edge] = edge_idx
-                    edge_to_faces[edge_idx] = [i, j]
-                    
-                    # Add to dual adjacency
-                    push!(dual_adj[i], (j, edge))
-                    push!(dual_adj[j], (i, edge))
-                end
-            end
-        end
-    end
-    
-    # Compute transport angles κ_ij
-    kappa = Dict{Tuple{Int, Int}, Float64}()
-    
+    # Collect all dual edges (face pairs)
+    all_dual_edges = Tuple{Int, Int}[]
     for face_i in 1:n_faces
         for (face_j, edge) in dual_adj[face_i]
             if face_i < face_j
-                # Get vertices for both triangles
-                f_i = fs[face_i]
-                f_j = fs[face_j]
-                
-                p1, p2, p3 = vs[f_i[1]], vs[f_i[2]], vs[f_i[3]]
-                q1, q2, q3 = vs[f_j[1]], vs[f_j[2]], vs[f_j[3]]
-                
-                # Compute transport angle (simplified - assumes planar geometry)
-                # For 2D meshes, κ_ij = 0. For 3D, need proper computation
-                kappa_ij = 0.0  # Placeholder - improve for 3D meshes
-                
-                kappa[(face_i, face_j)] = kappa_ij
-                kappa[(face_j, face_i)] = -kappa_ij
+                push!(all_dual_edges, (face_i, face_j))
             end
         end
     end
@@ -226,12 +152,31 @@ function assemble_system_matrix(
     fixed_edges = Set(values(fixed_edges_per_face))
     free_faces = setdiff(1:n_faces, constrained_faces)
     
-    # All edges are variables (both free and fixed)
-    all_edges = collect(keys(edge_map))
-    free_edges = [e for e in all_edges if !(e in fixed_edges)]
+    # Build edge_to_dual mapping (vertex edge -> dual edge)
+    edge_to_dual = Dict{Tuple{Int,Int}, Tuple{Int,Int}}()
+    for (face_i, face_j) in all_dual_edges
+        # Find the shared vertex edge
+        for (fj, edge) in dual_adj[face_i]
+            if fj == face_j
+                edge_to_dual[edge] = (face_i, face_j)
+                break
+            end
+        end
+    end
     
-    n_all_p = length(all_edges)
-    n_free_p = length(free_edges)
+    # Map fixed vertex edges to dual edges
+    fixed_dual_edges = Set{Tuple{Int,Int}}()
+    for v_edge in fixed_edges
+        if haskey(edge_to_dual, v_edge)
+            push!(fixed_dual_edges, edge_to_dual[v_edge])
+        end
+    end
+    
+    # All edges are variables (both free and fixed)
+    free_dual_edges = [e for e in all_dual_edges if !(e in fixed_dual_edges)]
+    
+    n_all_p = length(all_dual_edges)
+    n_free_p = length(free_dual_edges)
     n_fixed_p = n_all_p - n_free_p
     n_all_theta = n_faces
     n_free_theta = length(free_faces)
@@ -249,18 +194,18 @@ function assemble_system_matrix(
     p_is_fixed = Dict{Int, Bool}()
     
     var_idx = 0
-    # First add free edges
-    for edge in free_edges
+    # First add free dual edges
+    for dual_edge in free_dual_edges
         var_idx += 1
-        var_to_p[var_idx] = edge
-        p_to_var[edge] = var_idx
+        var_to_p[var_idx] = dual_edge
+        p_to_var[dual_edge] = var_idx
         p_is_fixed[var_idx] = false
     end
-    # Then add fixed edges
-    for edge in fixed_edges
+    # Then add fixed dual edges
+    for dual_edge in fixed_dual_edges
         var_idx += 1
-        var_to_p[var_idx] = edge
-        p_to_var[edge] = var_idx
+        var_to_p[var_idx] = dual_edge
+        p_to_var[dual_edge] = var_idx
         p_is_fixed[var_idx] = true
     end
     
@@ -294,7 +239,7 @@ function assemble_system_matrix(
     row = 0
     
     # Equations from ∂E/∂p_ij = 0 for each period jump variable
-    for (var_idx, edge) in sort(collect(var_to_p))
+    for (var_idx, dual_edge) in sort(collect(var_to_p))
         row += 1
         
         # Check if this is a fixed edge
@@ -308,44 +253,32 @@ function assemble_system_matrix(
         end
         
         # Free edge: use energy derivative equation
-        # Find faces incident to this edge
-        edge_idx = edge_map[edge]
-        incident_faces = edge_to_faces[edge_idx]
+        face_i, face_j = dual_edge
+        kappa_ij = get_transport_angle(field, face_i, face_j)
         
-        if length(incident_faces) != 2
-            # Boundary edge - add constraint p_ij = 0
-            push!(I_idx, row)
-            push!(J_idx, var_idx)
-            push!(vals, 1.0)
-            b[row] = 0.0
-            continue
-        end
+        # ∂E/∂p_ij = 2(θ_i + κ_ij + (π/2)p_ij - θ_j) · (π/2) = 0
+        #          = π(θ_i + κ_ij + (π/2)p_ij - θ_j) = 0
+        # Rearranging: (π²/2)p_ij + πθ_i - πθ_j = -πκ_ij
         
-        face_i, face_j = incident_faces
-        kappa_ij = kappa[(face_i, face_j)]
-        
-        # ∂E/∂p_ij = π(θ_i + κ_ij + (π/2)p_ij - θ_j) = 0
-        # Simplifies to: (π²/2)p_ij + πθ_i - πθ_j = -πκ_ij
-        
-        # Coefficient for p_ij itself: π² / 2
+        # Coefficient for p_ij itself: π²/2
         push!(I_idx, row)
         push!(J_idx, var_idx)
         push!(vals, π^2 / 2)
         
-        # Coefficient for θ_i: π (always include as variable)
+        # Coefficient for θ_i: π
         theta_var_i = theta_to_var[face_i]
         push!(I_idx, row)
         push!(J_idx, theta_var_i)
         push!(vals, π)
         
-        # Coefficient for θ_j: -π (always include as variable)
+        # Coefficient for θ_j: -π
         theta_var_j = theta_to_var[face_j]
         push!(I_idx, row)
         push!(J_idx, theta_var_j)
         push!(vals, -π)
         
-        # Constant term from κ_ij
-        b[row] -= π * kappa_ij
+        # RHS: -πκ_ij
+        b[row] = -π * kappa_ij
     end
     
     # Equations from ∂E/∂θ_k = 0 for each theta variable
@@ -364,32 +297,47 @@ function assemble_system_matrix(
         end
         
         # Free face: use energy derivative equation
+        # ∂E/∂θ_k = Σ_{j∈N(k)} 2(θ_k + κ_kj + (π/2)p_kj - θ_j) = 0
+        # Rearranging: 2·deg(k)·θ_k + Σ_j [π·p_kj - 2·θ_j] = -2·Σ_j κ_kj
+        
         # Sum over all neighbors of face_k
         degree = length(dual_adj[face_k])
         
-        # Diagonal term: 2 * degree
+        # Diagonal term: 2 * degree (coefficient for θ_k)
         push!(I_idx, row)
         push!(J_idx, var_idx)
         push!(vals, 2.0 * degree)
         
+        rhs_sum = 0.0
         for (face_j, edge) in dual_adj[face_k]
-            kappa_kj = kappa[(face_k, face_j)]
+            kappa_kj = get_transport_angle(field, face_k, face_j)
             
-            # Coefficient for p_kj: π (always include as variable)
-            p_var = p_to_var[edge]
+            # Determine dual edge (canonical form: face_i < face_j)
+            dual_edge = face_k < face_j ? (face_k, face_j) : (face_j, face_k)
+            
+            # Coefficient for p_kj depends on orientation
+            # If face_k < face_j (canonical), coefficient is +π
+            # If face_k > face_j (reversed), coefficient is -π
+            # This ensures antisymmetry with the storage convention
+            edge_sign = (face_k < face_j) ? 1.0 : -1.0
+            
+            p_var = p_to_var[dual_edge]
             push!(I_idx, row)
             push!(J_idx, p_var)
-            push!(vals, π)
+            push!(vals, edge_sign * π)
             
-            # Coefficient for θ_j: -2 (always include as variable)
+            # Coefficient for θ_j: -2
             theta_var_j = theta_to_var[face_j]
             push!(I_idx, row)
             push!(J_idx, theta_var_j)
             push!(vals, -2.0)
             
-            # Constant term from κ_kj
-            b[row] -= 2.0 * kappa_kj
+            # Accumulate RHS contribution from κ_kj
+            rhs_sum += kappa_kj
         end
+        
+        # RHS: -2 * Σ_j κ_kj
+        b[row] = -2.0 * rhs_sum
     end
     
     # Build sparse matrix

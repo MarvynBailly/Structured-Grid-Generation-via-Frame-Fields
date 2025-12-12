@@ -5,6 +5,7 @@ include("../src/plotters.jl")
 case_folder_name = "triangulations"
 
 case_names = [
+    "simplest-square",
     "simple-square",
     "300_polygon_sphere_100mm",
 ]

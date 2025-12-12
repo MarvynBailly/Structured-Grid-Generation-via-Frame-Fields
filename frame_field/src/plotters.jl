@@ -309,3 +309,222 @@ function plot_forest(mesh::GeometryBasics.Mesh; constrained_faces=Int[],
     end
     return fig
 end
+
+
+############################################################
+############################################################
+############################################################
+############################################################
+############################################################
+############################################################
+
+
+"""
+    plot_frame_field(mesh::GeometryBasics.Mesh, angles::Vector{Float64};
+                     savepath=nothing, arrow_scale=0.3, 
+                     show_triangulation=true, constrained_faces=Int[])
+
+Plot the frame field (cross field) on a triangular mesh.
+
+Each triangle face shows a cross (4-way directional field) based on the angle value.
+The cross represents the principal directions at π/2 intervals.
+
+# Arguments
+- `mesh::GeometryBasics.Mesh` - The triangular mesh
+- `angles::Vector{Float64}` - Angle for each face (in radians)
+- `savepath` - Path to save the figure (optional)
+- `arrow_scale` - Scale factor for the cross arms (default: 0.3)
+- `show_triangulation` - Whether to show the mesh edges (default: true)
+- `constrained_faces` - Faces with constrained directions (highlighted in red)
+- `singularities` - Vector of (vertex_idx, index_value, position, is_boundary) tuples to display
+- `show_boundary_singularities` - Whether to show boundary singularities (default: false)
+"""
+function plot_frame_field(mesh::GeometryBasics.Mesh, angles::Vector{Float64};
+                          savepath=nothing, arrow_scale=0.3,
+                          show_triangulation=true, constrained_faces=Int[],
+                          constrained_color=:red,
+                          singularities=[],
+                          show_boundary_singularities=false,
+                          title="Frame Field",
+                          period_jumps=nothing,
+                          topology=nothing)
+    fig = Figure(size=(900, 700))
+    ax = Axis(fig[1, 1], aspect=DataAspect(), title=title)
+
+    # Extract vertex coordinates
+    vs = coordinates(mesh)
+    V = zeros(Float64, length(vs), 3)
+    for (i, p) in enumerate(vs)
+        V[i, 1] = p[1]
+        V[i, 2] = p[2]
+        V[i, 3] = p[3]
+    end
+
+    fs = faces(mesh)
+    nfaces = length(fs)
+
+    # Draw triangulation if requested
+    if show_triangulation
+        for f in fs
+            idxs = Tuple(f)
+            pts = Point2f[]
+            for i in idxs
+                push!(pts, Point2f(V[i, 1], V[i, 2]))
+            end
+            poly!(ax, pts, color=(:lightblue, 0.3), strokecolor=:gray, strokewidth=0.5)
+        end
+    end
+
+    # Compute face centroids
+    centroids = zeros(Float64, nfaces, 2)
+    face_radii = zeros(Float64, nfaces)
+    for (fi, f) in enumerate(fs)
+        idxs = Tuple(f)
+        centroids[fi, 1] = mean(V[[idxs...], 1])
+        centroids[fi, 2] = mean(V[[idxs...], 2])
+        
+        # Compute approximate face radius (for scaling arrows)
+        dists = [norm([V[idxs[i], 1] - centroids[fi, 1], 
+                      V[idxs[i], 2] - centroids[fi, 2]]) for i in 1:3]
+        face_radii[fi] = mean(dists)
+    end
+
+    # Draw frame field (crosses)
+    for (fi, angle) in enumerate(angles)
+        cx, cy = centroids[fi, 1], centroids[fi, 2]
+        r = face_radii[fi] * arrow_scale
+        
+        # Draw 4 directions at π/2 intervals
+        for k in 0:3
+            θ = angle + k * π/2
+            dx = r * cos(θ)
+            dy = r * sin(θ)
+            
+            # Draw line from center outward
+            color = (fi in constrained_faces) ? constrained_color : :black
+            linewidth = (fi in constrained_faces) ? 2.5 : 1.5
+            
+            lines!(ax, [cx - dx, cx + dx], [cy - dy, cy + dy], 
+                   color=color, linewidth=linewidth)
+        end
+    end
+
+    # Draw centroids
+    scatter!(ax, centroids[:, 1], centroids[:, 2], color=:blue, markersize=3, alpha=0.5)
+
+    # Draw dual graph with period jump coloring
+    if period_jumps !== nothing && topology !== nothing
+        # Build edge map for dual graph
+        edge_map = Dict{Tuple{Int,Int}, Vector{Int}}()
+        for (fi, f) in enumerate(fs)
+            idxs = Tuple(f)
+            for j in 1:3
+                v1 = idxs[j]
+                v2 = idxs[mod1(j+1, 3)]
+                edge = v1 < v2 ? (v1, v2) : (v2, v1)
+                if !haskey(edge_map, edge)
+                    edge_map[edge] = Int[]
+                end
+                push!(edge_map[edge], fi)
+            end
+        end
+        
+        # Color map for period jumps (0->gray, 1->green, 2->yellow, 3->red)
+        p_colors = Dict(0 => :gray, 1 => :green, 2 => :yellow, 3 => :red)
+        
+        # Draw dual edges colored by period jump
+        for (edge, adj_faces) in edge_map
+            if length(adj_faces) == 2
+                face_i, face_j = adj_faces[1], adj_faces[2]
+                if face_i > face_j
+                    face_i, face_j = face_j, face_i
+                end
+                
+                # Get period jump value
+                p_val = get(period_jumps, (face_i, face_j), 0)
+                color = get(p_colors, Int(round(p_val)), :black)
+                
+                # Draw edge between centroids
+                x_coords = [centroids[face_i, 1], centroids[face_j, 1]]
+                y_coords = [centroids[face_i, 2], centroids[face_j, 2]]
+                lines!(ax, x_coords, y_coords, color=color, linewidth=2.5, alpha=0.7)
+            end
+        end
+        
+        # Add legend for period jumps
+        legend_elements = [
+            LineElement(color=:gray, linewidth=2.5),
+            LineElement(color=:green, linewidth=2.5),
+            LineElement(color=:yellow, linewidth=2.5),
+            LineElement(color=:red, linewidth=2.5)
+        ]
+        legend_labels = ["p=0", "p=1", "p=2", "p=3"]
+        Legend(fig[1, 2], legend_elements, legend_labels, "Period Jumps")
+    end
+
+    # Highlight constrained faces
+    if !isempty(constrained_faces)
+        for cf in constrained_faces
+            if 1 <= cf <= nfaces
+                f = fs[cf]
+                idxs = Tuple(f)
+                pts = Point2f[]
+                for i in idxs
+                    push!(pts, Point2f(V[i, 1], V[i, 2]))
+                end
+                poly!(ax, pts, color=(:red, 0.2), strokecolor=constrained_color, strokewidth=2.5)
+            end
+        end
+    end
+
+    # Draw singularities
+    if !isempty(singularities)
+        for sing in singularities
+            # Handle both 3-tuple (v_idx, index, pos) and 4-tuple (v_idx, index, pos, is_boundary)
+            v_idx = sing[1]
+            index = sing[2]
+            pos = sing[3]
+            is_boundary = length(sing) >= 4 ? sing[4] : false
+            
+            # Skip boundary singularities unless requested
+            if is_boundary && !show_boundary_singularities
+                continue
+            end
+            
+            x, y = pos[1], pos[2]
+            
+            # Color based on index sign: positive (green) = lower valence, negative (purple) = higher valence
+            if is_boundary
+                sing_color = :orange
+                marker = :rect
+            elseif index > 0
+                sing_color = :green
+                marker = :star5
+            else
+                sing_color = :purple
+                marker = :diamond
+            end
+            
+            # Size based on absolute index
+            markersize = 12 + abs(index) * 20
+            
+            scatter!(ax, [x], [y], color=sing_color, markersize=markersize, 
+                     marker=marker, strokecolor=:black, strokewidth=1.5)
+            
+            # Add text label with index as fraction
+            index_quarters = round(Int, index * 4)
+            if abs(index - index_quarters/4) < 1e-6
+                index_str = index_quarters > 0 ? "+$(index_quarters)/4" : "$(index_quarters)/4"
+            else
+                index_str = "$(round(index, digits=2))"
+            end
+            text!(ax, x, y + 0.03 * (maximum(V[:, 2]) - minimum(V[:, 2])), 
+                  text=index_str, fontsize=10, align=(:center, :bottom), color=:black)
+        end
+    end
+
+    if savepath !== nothing
+        save(savepath, fig)
+    end
+    return fig
+end

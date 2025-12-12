@@ -97,6 +97,7 @@ Returns a Dict{Int, Tuple{Int,Int}} mapping face_idx → edge.
 function fix_suitable_edges(mesh::GeometryBasics.Mesh, potential_fixed_edges)
     faces_list = decompose(TriangleFace{Int}, mesh)
     fixed_edges_per_face = Dict{Int, Tuple{Int,Int}}()
+    used_edges = Set{Tuple{Int,Int}}()
 
     for (f_idx, face) in enumerate(faces_list)
         vs = (face[1], face[2], face[3])
@@ -106,14 +107,11 @@ function fix_suitable_edges(mesh::GeometryBasics.Mesh, potential_fixed_edges)
             v_a, v_b = minmax(vs[k], vs[mod1(k+1, 3)])
             push!(face_edges, (v_a, v_b))
         end
-        # Randomize selection: skip some faces to ensure proper subset
-        if rand() < 0.5
-            continue
-        end
-        # find the first edge that is in potential_fixed_edges and fix it
+        # find the first edge that is in potential_fixed_edges and not already used
         for edge in face_edges
-            if edge in potential_fixed_edges
+            if edge in potential_fixed_edges && edge ∉ used_edges
                 fixed_edges_per_face[f_idx] = edge
+                push!(used_edges, edge)
                 break
             end
         end
