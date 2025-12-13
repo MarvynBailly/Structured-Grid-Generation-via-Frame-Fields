@@ -448,9 +448,10 @@ end
     plot_field!(ax, field; color=:black, scale=0.1)
 Draws the cross field vectors.
 """
-function plot_field!(ax, field::CrossField; color=:blue, scale=0.15)
+function plot_field!(ax, field::CrossField; color=:blue, scale=0.03)
     xs, ys, us, vs = Float64[], Float64[], Float64[], Float64[]
-    
+    colors = []
+
     for i in 1:length(field.topology.faces)
         # Skip constrained faces in the main drawing (we will draw them special)
         if haskey(field.constrained_faces, i)
@@ -465,10 +466,15 @@ function plot_field!(ax, field::CrossField; color=:blue, scale=0.15)
             a = angle + k * π/2
             push!(xs, c[1]); push!(ys, c[2])
             push!(us, cos(a)*scale); push!(vs, sin(a)*scale)
+            if k == 0
+                push!(colors, :blue) # Blue for main direction
+            else
+                push!(colors, :green) # Green for others
+            end
         end
     end
     
-    arrows2d!(ax, xs, ys, us, vs, color=color)
+    arrows2d!(ax, xs, ys, us, vs, color=colors)
 end
 
 """
@@ -478,6 +484,8 @@ Highlights the constrained faces and draws their fixed frame.
 function plot_constraints!(ax, field::CrossField; scale=0.2)
     topo = field.topology
     
+    colors = []
+
     # 1. Fill the constrained faces
     for (f_idx, _) in field.constrained_faces
         tri = topo.faces[f_idx]
@@ -496,10 +504,15 @@ function plot_constraints!(ax, field::CrossField; scale=0.2)
             a = angle + k * π/2
             push!(xs, c[1]); push!(ys, c[2])
             push!(us, cos(a)*scale); push!(vs, sin(a)*scale)
+            if k == 0
+                push!(colors, :red) # Red for main direction
+            else
+                push!(colors, :orange) # Orange for others
+            end
         end
     end
     
-    arrows2d!(ax, xs, ys, us, vs, color=:red)
+    arrows2d!(ax, xs, ys, us, vs, color=colors)
 end
 
 # ==============================================================================
@@ -570,6 +583,8 @@ function solve_miq_animated!(field::CrossField, filename::String)
             push!(field.fixed_edges, target)
             
             draw_frame("Step $iter: Fixed Edge to $val", :blue)
+            println("Iter $iter: Fixed edge $target to $val (Err: $(round(best_err, digits=4)))")
+            println("  Remaining free edges: $(length(free_edges) - 1)")
         end
         
         solve_relaxation!(field)
@@ -589,7 +604,7 @@ function run_visual_example()
     # filename = "triangulations/hole.msh"
     verts, faces = read_msh(filename)
     topo = build_topology(verts, faces)
-    constraints = Dict(1 => 2.3, 10 => -1.0)
+    constraints = Dict(1 => 2.3 - π/6)#, 50 => -2.3 + π + π/6 - π/3)
     
     # 2. Create Initial State (Copy for comparison)
     field_initial = initialize_field(topo, constraints)

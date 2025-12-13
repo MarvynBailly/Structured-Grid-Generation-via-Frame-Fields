@@ -409,7 +409,14 @@ where $I_0(v)$ is the initial index determined by the geometry of the mesh
 \begin{equation}
     I_0(v) =  \frac{1}{2\pi} \left( A_d(v) + \sum_{e_{ij} \in \text{star}(v)} \kappa_{ij} \right),
 \end{equation}
-where $A_d(v)$ is the angle defect at vertex $v$ and $\text{star}(v)$ is the set of edges incident to vertex $v$. Ray et. al. (2008b) show that vertices with non-zero index correspond to singularities in the frame field which will later correspond to irregular vertices in the quadrilateral mesh. The index will be an multiple of $1/4$ and determine the valence of the irregular vertex in the quad mesh e.g., an index of $+1/4$ corresponds to a vertex with valence 3 while an index of $-1/4$ corresponds to a vertex with valence 5.
+where $A_d(v)$ is the angle defect at vertex $v$ and $\text{star}(v)$ is the set of edges incident to vertex $v$. We compute the angle defect as
+\begin{equation}
+    A_d(v) = 2\pi - \sum_{f_k \in \text{star}(v)} \alpha_k,
+\end{equation}
+where $\alpha_k$ is the angle at vertex $v$ in face $f_k$. Ray et. al. (2008b) shows that vertices with non-zero index correspond to singularities in the frame field which will later correspond to irregular vertices in the quadrilateral mesh. The index is ensured to be an multiple of $1/4$ and will determine the valence of the irregular vertex in the quad mesh. It can be shown that an index of $+1/4$ corresponds to a vertex with valence $3$ while an index of $-1/4$ corresponds to a vertex with valence $5$. In general, we have the relationship
+\begin{equation}
+    \text{valence}(v) = 4 - 4 I(v).
+\end{equation}
 
 \subsubsection{Finding a Smooth Frame Field}
 The problem we wish to solve is given a triangular mesh $M$ and a subset of faces $F_c \subset F$ with constrained direction $\theta_i = \hat{\theta}_i$ for $i \in F_c$, we search for a smooth frame field by minimizing the energy given by equation \ref{eq:smooth_energy}. That is, we wish to solve for $\theta_i$ and $p_{ij}$, which minimize $E_\text{smooth}$ subject to the constraints $\theta_i = \hat{\theta}_i$ for $i \in F_c$. This is a mixed-integer problem since $\theta_i$ are real-valued while $p_{ij}$ are integers.
