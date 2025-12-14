@@ -94,7 +94,7 @@ This paper presents an investigation into automatic structured quadrilateral gri
 % --- INTRODUCTION ---
 \section{Introduction}
 
-In Computional Fluid Dynamics (CFD), the generation of high-quality meshes is crucial for accurate simulations which use finite volume methods. Structured quadrilateral grids are particularly advantageous due to their regular connectivity and alignment with flow features. This paper explores the use of frame fields for automatic generation of structured quadrilateral grids, providing a systematic approach to mesh generation that can adapt to complex geometries. In this study, we implement the Mixed-Integer Quadrangulation (MIQ) method in Julia as described by Bommes et al. (Bommes 2009) and evaluate its performance on various geometries. 
+In Computional Fluid Dynamics (CFD), the generation of high-quality meshes is crucial for accurate simulations which use finite volume methods. Structured quadrilateral grids are particularly advantageous due to their regular connectivity and alignment with flow features. This paper explores the use of frame fields for automatic generation of structured quadrilateral grids, providing a systematic approach to mesh generation that can adapt to complex geometries. In this study, we implement the Mixed-Integer Quadrangulation (MIQ) method in Julia as described by Bommes et al.~\cite{bommes2009mixed} and evaluate its performance on various geometries. 
 
 We aim to generate structured quadrilateral meshes that maintain the following qualities:
 \begin{itemize}
@@ -110,18 +110,17 @@ In the following sections, we will detail the methodology used to implement the 
 
 % --- METHODOLOGY ---
 \section{Methodology}
-We break the methodology into two main steps: (1) Frame Field Generation and (2) Quadrilateral Mesh Extraction. The core of both steps relies on solving a minimzation problem where some of the variables are integers while the others are real-valued. This is known as a Mixed-Integer Program (MIP) which are generally NP-hard to solve. To address this, we implement an approximation algorithm known as a greedy mixed-integer solver as described by Bommes et al.. 
+We break the methodology into two main steps: (1) Frame Field Generation and (2) Quadrilateral Mesh Extraction. The core of both steps relies on solving a minimization problem where some of the variables are integers while the others are real-valued. This is known as a Mixed-Integer Program (MIP) which are generally NP-hard to solve. To address this, we implement an approximation algorithm known as a greedy mixed-integer solver as described by Bommes et al.~\cite{bommes2009mixed}. 
 
 \subsection{Mixed-Integer Solver}
 
 \subsubsection{Problem Formulation}
 
-The minimzation of a quadratic energy function $E(x_1, \dots, x_n)$ is an integer problem if $x \in \mathbb{Z}^n$. However, in this paper, we encounter a more general problem were some of the unknown variables $x_1, \dots, x_k$ are integers while the remaining variables $x_{k+1}, \dots, x_n$ are real-valued. This is known as a Mixed-Integer Program (MIP) which are generally NP-hard to solve and so we hope to avoid solving them directly. We note that the continuous relaxation of a MIP, obtained by allowing all variables to be real-valued, provides a lower bound on the optimal solution of the original MIP. Thus this provides a reasonable starting point for approximation algorithms.
-
-\subsubsection{Common Approaches}
-A common approach to approaching a MIP is to first compute the continuous minimizer, which simlpiy requires the solution of the linear system $\{ \partial E / \partial x_i = 0 \}_{i=1}^n$. Then the first $k$ variables of the oslution are rounded to the nearest integer and treated as constant while resolving the linear system for the remaining real-valued variables. This is known as direct rounding but the solution can signficailty deviate from the optimal solution. This motivates the authers to propose a greedy mixed-integer solver which is explained next.
+The minimization of a quadratic energy function $E(x_1, \dots, x_n)$ is an integer problem if $x \in \mathbb{Z}^n$. However we encounter a more general problem were some of the unknown variables $x_1, \dots, x_k$ must be integers while the remaining variables $x_{k+1}, \dots, x_n$ are real-valued. We note that the continuous relaxation of a MIP, obtained by allowing all variables to be real-valued (e.g. relaxing the integer constraints), provides a lower bound on the optimal solution of the original MIP. Thus this provides a reasonable starting point for approximation algorithms to solve MIPs.
 
 \subsubsection{Greedy Mixed-Integer Solver}
+We begin by computing the continuous minimizer of the MIP, which requires the solution of the linear system $\{ \partial E / \partial x_i = 0 \}_{i=1}^n$. Then the first $k$ variables of the solution are rounded to the nearest integer and treated as constant while resolving the linear system for the remaining real-valued variables. This is known as direct rounding but in this application it often leads to a suboptimal solution. This motivates Bommes et al.~\cite{bommes2009mixed} to propose a greedy mixed-integer solver.
+
 \begin{figure}
 \centering
 \begin{tikzpicture}[
@@ -188,70 +187,17 @@ A common approach to approaching a MIP is to first compute the continuous minimi
 \label{fig:greedy_solver}
 \end{figure}
 
+Rather than rounding the first $k$ real valued variables to integers, the greedy rounding approach rounds one integer variable at a time. This is followed by an immediate update of the continuous part treating the integers as constants. 
 
-Rather than rounding the first $k$ real valued variables to integers, the greedy rounding approch rounds one integer variable at a time. This is followed by an immediate update of the continous part treating the integers as constants. 
+If we let $\vec{x}^0$ be the continuous solution to the linear system and let $x_i$, $1 \leq i \leq k$ be the variable which causes the smallest absolute error if we round it to the nearest integer. Then we set $x_i$ to this integer value. We solve the remaining variables $\vec{x}^1$ treating $x_i$ as a constant. We continue to eliminate in integer variables on each step until we have an integer for all $x_1, \dots, x_k$ as desired by the MIP.
 
-Let $\vec{x}^0$ be the continuous solution to the linear system and let $x_i$, $i \leq k$ be the variable which causes the smallest absolute error if we round it to the nearest integer. Then we set $x_i$ to this integer value. We solve the remaining variables $\vec{x}^1$ and continue to eliminate in eahc step that variable which cauess the least round-off error until we have an integer for all $x_1, \dots, x_k$.
-
-To reduce the computational cost, we use a local Gauss-Seidel update rather than solving the full linear system after each rounding step. That means after after $x_i$ is rounded, we add all variables whose Gauss-Seidel update depends on $x_i$ to a priority queue. These elements correspond to the nonzero elements in row $A_i$. Now on each iteration, we pop the highest priority element from the queue, compute the local residuum 
+To reduce the computational cost, we use a local Gauss-Seidel update rather than solving the full linear system after each rounding step. That means after $x_i$ is rounded, we add all variables whose Gauss-Seidel update depends on $x_i$ to a priority queue. These elements correspond to the nonzero elements in row $A_i$. Now on each iteration, we pop the highest priority element from the queue, compute the local residuum 
 \begin{equation}
     r_k = b_k - \sum_{j \neq n} A_{kj} x_j.
 \end{equation}
 If $|r_k| \geq \tau$, a small threshold, we update $x_k \leftarrow x_k - r_k / A_{kk}$ and push all variables which depend on $x_k$ back into the priority queue. This continues until the queue is empty. If the method does not converge in a reasonable number of iterations, we fall back to solving the full linear system. Figure \ref{fig:greedy_solver} illustrates the high-level workflow of this algorithm while Algorithm \ref{alg:greedy_solver} provides the detailed pseudocode. 
 
 
-
-\begin{algorithm}
-\caption{Greedy Mixed-Integer Solver}
-\label{alg:greedy_solver}
-\KwIn{System matrix $A$, right-hand side $b$, number of integer variables $k$, threshold $\tau$}
-\KwOut{Solution vector $\vec{x}$ with integer values for $x_1, \ldots, x_k$}
-
-\BlankLine
-
-\tcp{Solve continuous relaxation}
-Solve linear system $A\vec{x}^0 = b$ for all variables\;
-$\text{rounded} \leftarrow \emptyset$\;
-
-\BlankLine
-
-\tcp{Round integer variables greedily}
-\For{$i = 1$ \KwTo $k$}{
-    \tcp{Find variable with minimum rounding error}
-    $j \leftarrow \arg\min_{j \in \{1,\ldots,k\} \setminus \text{rounded}} |x_j^{i-1} - \text{round}(x_j^{i-1})|$\;
-    
-    \tcp{Round and fix variable}
-    $x_j \leftarrow \text{round}(x_j^{i-1})$\;
-    $\text{rounded} \leftarrow \text{rounded} \cup \{j\}$\;
-    
-    \BlankLine
-    
-    \tcp{Update affected continuous variables using Gauss-Seidel}
-    \tcp{Q contains indices $m$ where $A_{mj} \neq 0$ (row $j$ has nonzero entry)}
-    $Q \leftarrow \{ m : A_{mj} \neq 0 \}$\;
-    
-    \While{($Q$ is not empty) and (iteration count $<$ max\_iterations)}{
-        $m \leftarrow Q.\text{pop}()$\;
-        
-        \tcp{Compute local residual}
-        $r_m \leftarrow b_m - \sum_{n} A_{mn} x_n$\;
-        
-        \If{$|r_m| \geq \tau$}{
-            \tcp{Update variable}
-            $x_m \leftarrow x_m - r_m / A_{mm}$\;
-            
-            \tcp{Add dependent variables to queue}
-            \For{each $n$ where $A_{nm} \neq 0$}{
-                $Q.\text{push}(n)$\;
-            }
-        }
-    }
-}
-
-\BlankLine
-
-\Return{$\vec{x}$}\;
-\end{algorithm}
 
 
 
@@ -260,9 +206,9 @@ In this section we introduce the mathematical formulation and implementation det
 
 
 \subsubsection{Mathematical Formulation}
-A frame field is a $N$-symmetry direction field (Ray et al. 2008b) where at each point in the domain, $N$ directions are defined that are symmetric under rotation by $2\pi/N$ around the point of interest. For quadrilateral meshing, we are interested in 4-symmetry frame fields, or cross fields, where $N=4$. For the rest of the project, we will take $N = 4$. The frame field is represented by an angle-field $\theta: F \mapsto \mathbb{R}$ which assigns an angle $\theta_f$ to each face $f \in F$ of the triangular mesh and a period-jump field $p: E \mapsto \mathbb{Z}$ which assigns an integer period-jump $p_e$ to each edge $e \in E$ of the mesh.  
+A frame field is a $N$-symmetry direction field where at each point in the domain, $N$ directions are defined that are symmetric under rotation by $2\pi/N$ around the point of interest. For quadrilateral meshing, we are interested in 4-symmetry frame fields, or cross fields, where $N=4$. For the rest of the project, we will take $N = 4$. The frame field is represented by an angle-field $\theta: F \mapsto \mathbb{R}$ which assigns an angle $\theta_f$ to each face $f \in F$ of the triangular mesh and a period-jump field $p: E \mapsto \mathbb{Z}$ which assigns an integer period-jump $p_e$ to each edge $e \in E$ of the mesh.  
 
-The idea is that for each face $f$, we can define a local frame of reference by rotating a reference edge $e$ along the $x$-axis. Then the four directions of the frame at face $f$ are given by rotating this reference edge by angles $\theta_f + k \cdot \pi/2$ for $k = 0, 1, 2, 3$. This is visualized in Figure \ref{fig:frame_field_combined} \ref{sub@fig:frame_field}. The period-jump field $p_e$ determines which direction in face $f_1$ corresponds to which direction in the adjacent face $f_2$ across edge $e$. Specifically, the direction in face $f_2$ that aligns with the reference edge is given by $\theta_{f_2} + p_e \cdot \pi/2$. This relationship is illustrated in Figure \ref{fig:frame_field_combined} \ref{sub@fig:period_jump}.
+The idea is that for each face $f$, we can define a local frame of reference by treating one of the faces's edge $e$ as the $x$-axis. Then the four directions of the frame are given by rotating counter-clockwise by $\theta_f + k \cdot \pi/2$ for $k = 0, 1, 2, 3$. This is visualized in Figure \ref{fig:frame_field_combined} \ref{sub@fig:frame_field}. Since we are aiming to minimize a difference $\theta_i - \theta_j$ for neighboring faces $f_i$ and $f_j$ across the shared edges $e_{ij}$, we need a way to map one local of reference to another. The period-jump $p_{ij}$ defined on each edge $e_{ij}$ determines the direction in face $f_i$ which corresponds to the direction in the adjacent face $f_j$. Specifically, the direction in face $f_j$ that aligns with the reference edge is given by $\theta_{f_j} + p_{ij} \cdot \pi/2$. This relationship is illustrated in Figure \ref{fig:frame_field_combined} \ref{sub@fig:period_jump}.
 
 \begin{figure}[H]
 \centering
@@ -392,14 +338,12 @@ The idea is that for each face $f$, we can define a local frame of reference by 
 \label{fig:frame_field_combined}
 \end{figure}
 
-
-
 \subsubsection{Constructing a Smooth Frame Field}
 The smoothness of a unit frame field can be measured by the angular difference between faces:
 \begin{equation}\label{eq:smooth_energy}
     E_\text{smooth} = \sum_{e_{ij} \in E} \left(\theta_i + \kappa_{ij} + \frac{2\pi}{N} p_{ij} - \theta_j\right)^2,
 \end{equation}
-where $\theta_i$, and $\theta_j$ are the angles of trangle $i$ and $j$ to it's respective reference edge, $\kappa_{ij} \in (-\pi, \pi]$ is the angle between the reference edges of triangles $i$ and $j$, $p_{ij}$ is the integer period-jump across edge $e_{ij}$, and $N=4$ for quadrilateral meshing.
+where $\theta_i$, and $\theta_j$ are the angles of triangle $i$ and $j$ to it's respective reference edge, $\kappa_{ij} \in (-\pi, \pi]$ is the angle between the reference edges of triangles $i$ and $j$, $p_{ij}$ is the integer period-jump across edge $e_{ij}$, and $N=4$ for quadrilateral meshing.
 
 The cross field index of a vertex $v$ is defined as:
 \begin{equation}
@@ -413,7 +357,7 @@ where $A_d(v)$ is the angle defect at vertex $v$ and $\text{star}(v)$ is the set
 \begin{equation}
     A_d(v) = 2\pi - \sum_{f_k \in \text{star}(v)} \alpha_k,
 \end{equation}
-where $\alpha_k$ is the angle at vertex $v$ in face $f_k$. Ray et. al. (2008b) shows that vertices with non-zero index correspond to singularities in the frame field which will later correspond to irregular vertices in the quadrilateral mesh. The index is ensured to be an multiple of $1/4$ and will determine the valence of the irregular vertex in the quad mesh. It can be shown that an index of $+1/4$ corresponds to a vertex with valence $3$ while an index of $-1/4$ corresponds to a vertex with valence $5$. In general, we have the relationship
+where $\alpha_k$ is the angle at vertex $v$ in face $f_k$. It can be shown that vertices with non-zero index correspond to singularities in the frame field which will later correspond to irregular vertices in the quadrilateral mesh. The index is ensured to be an multiple of $1/4$ and will determine the valence of the irregular vertex in the quad mesh. An index of $+1/4$ corresponds to a vertex with valence $3$ while an index of $-1/4$ corresponds to a vertex with valence $5$. In general, we have the relationship
 \begin{equation}
     \text{valence}(v) = 4 - 4 I(v).
 \end{equation}
@@ -421,72 +365,192 @@ where $\alpha_k$ is the angle at vertex $v$ in face $f_k$. Ray et. al. (2008b) s
 \subsubsection{Finding a Smooth Frame Field}
 The problem we wish to solve is given a triangular mesh $M$ and a subset of faces $F_c \subset F$ with constrained direction $\theta_i = \hat{\theta}_i$ for $i \in F_c$, we search for a smooth frame field by minimizing the energy given by equation \ref{eq:smooth_energy}. That is, we wish to solve for $\theta_i$ and $p_{ij}$, which minimize $E_\text{smooth}$ subject to the constraints $\theta_i = \hat{\theta}_i$ for $i \in F_c$. This is a mixed-integer problem since $\theta_i$ are real-valued while $p_{ij}$ are integers.
 
-To reduce the problem space, we can take advantage of the invaraiance under rotation of the frame field. Following the work of Bommes et al. (2009), the minimization problem can be mind unique by fixing one period jump variable to zero per triangle. In order to not change the value of the energy, we take care not to fix edges whose dual paths connect two constrained faces, or closes loops. To generate a valid set of edges whose period jumps may be fixed, we construct a Dijkstra tree over the dual graph of the triangular mesh, starting from the constrained faces. A visualization of this process is shown in Figure \ref{fig:dijkstra_tree}. 
+To reduce the problem space, we can take advantage of the invariance under rotation of the frame field. Following the work of Bommes et al.~\cite{bommes2009mixed}, the minimization problem can be made unique by fixing one period jump variable to zero per triangle before the initial continuous solution $x^0$. In order to not change the value of the energy, we take care not to fix edges whose dual paths connect two constrained faces, or closes loops. To generate a valid set of edges whose period jumps may be fixed, we construct a Dijkstra tree over the dual graph of the triangular mesh, starting from each of the constrained faces. The algorithm works by each root claiming edges to prevent loops and connected paths between trees. A visualization of this can be seen in the green lines coming the yellow faces in Figure \ref{fig:frame_field_result}. Here the yellow faces represent the constrained faces $F_c$ while the green lines represent the edges whose period jumps have been fixed to zero.
 
-
-\begin{figure}
-    \centering
-    \includegraphics[width=0.5\textwidth,height=\textwidth,keepaspectratio]{../frame_field/output/forests/triangulation_forest_simple-square.png}
-    \caption{Constrained faces are highlighted in red with a Dijkstra tree spanning along the dual graph. Importantly we see that the trees do not loop or connect to trees from other constrained faces. Edges in the primal graph whose dual edges are part of the Dijkstra tree may have their period jumps fixed to zero without changing the energy of the frame field.}
-    \label{fig:dijkstra_tree}
-\end{figure}
-
-
-\subsubsection{Implementation Details}
-To implement the frame field generation, we first construct the Dijkstra tree to identify edges whose period jumps can be fixed. We then set up the minimization problem by taking the derivative of the energy function with respect to each variable, leading to a system of linear equations for the real-valued variables $\theta$ and integer constraints for the period jumps $p$. The resulting equations are as follows:
+\subsubsection{Smooth Relaxation Solution} 
+To find the solution of the continuous relaxation, we take the derivative of the energy function with respect to each variable, leading to a system of linear equations for the real-valued variables $\theta$ and now real valued integer constraints for the period jumps $p$. The resulting equations are as follows:
 \begin{equation}
     \begin{aligned}
     \frac{\partial E_\text{smooth}}{\partial \theta_k} &= \sum_{e_{kj} \in \text{star}(v)} 2 \left(\theta_k + \kappa_{kj} + \frac{\pi}{2} p_{kj}  - \theta_j \right) = 0, \\
     \frac{\partial E_\text{smooth}}{\partial p_{ij}} &= \pi\left( \theta_i + \kappa_{ij} + \frac{\pi}{2} p_{ij} - \theta_j \right) = 0. 
     \end{aligned}
 \end{equation}
-For all variables that are not fixed, we assemble a row in a single matrix that we pass to the greedy mixed-integer solver described earlier. The solver returns the optimal $\theta$ and $p$ values which define the smooth frame field over the triangular mesh adhering to the user-defined constraints on $F_c$.
+For all variables that are not fixed, we assemble a row in a single matrix that we pass to the greedy mixed-integer solver described earlier. The solver returns the optimal $\theta$ and $p$ values which define the smooth frame field over the triangular mesh adhering to the user-defined constraints on $F_c$. An example of a smooth frame field proceed by my Julia solver around a DAE11 airfoil geometry is shown in Figure \ref{fig:frame_field_result}. We note that in this case, there are no singularities in the frame field.
 
-
+\begin{figure}
+    \centering
+    \includegraphics[width=0.75\textwidth,height=\textwidth,keepaspectratio]{../frame_field_extract/output/smooth-airfoil-crossfield.png}
+    \caption{The resulting smooth frame field around a DAE11 airfoil geometry. The frame directions are visualized as blue crosses with the main direction shown in red. The constrained faced are highlighted in yellow. The forest of Dijkstra trees whose edges have fixed period jumps are shown in green. The cut graph used for quadrilateral mesh extraction is shown in red.}
+    \label{fig:frame_field_result}
+\end{figure}
 
 
 \subsection{Quadrilateral Mesh Extraction}
+To extract a quadrilateral mesh from the computed frame field, we follow the method described by Bommes et al.~\cite{bommes2009mixed}. We begin by computing a global parameterization from the given mesh to a disk-shaped paramter domain in $\mathbb{R}^2$. To do so, we assign a $(u,v)$ parameter value to each vertex in the mesh such that the parametrization locally aligns to the smooth frame field found in the previous section. That is, the $u$ and $v$ gradients should minimize the following local energy:
+\begin{equation}
+    E_T = \|h \nabla u - \mathbf{u}_T\|^2 + \|h \nabla v - \mathbf{v}_T\|^2,
+\end{equation}
+where $\mathbf{u}_T$ and $\mathbf{v}_T$ are two orthogonal directions of the frame field in triangle $T$ and $h$ is a global scaling factor to control the size of the quads in the final mesh. The global orientation energy is then given by summing over all triangles:
+\begin{equation}
+    E_\text{orient} = \int_M E_t dA = \sum_{T \in F} A(T) E_T,
+\end{equation}
+where $A(T)$ is the area of triangle $T$. The extracted $\mathbf{u}_T$ and $\mathbf{v}_T$ for the DAE11 airfoil example are visualized in Figure \ref{fig:uv_vectors}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.75\textwidth,height=\textwidth,keepaspectratio]{../frame_field_extract/output/uv-vector.png}
+    \caption{Extracted $\mathbf{u}_T$ and $\mathbf{v}_T$ for the DAE11 airfoil example.}
+    \label{fig:uv_vectors}
+\end{figure}
 
 
+\subsubsection{Mesh Cut}
+To compute this minimization, we need to cut the mesh into a disk topology by introducing a cut graph from the boundary to all singularities in the frame field. The cut graph follows a similar approach to the Dijkstra tree used in the frame field generation step. The cut graph for the DAE11 airfoil geometry is visualized in red in Figure \ref{fig:frame_field_result}. Intuitively, the cut graph now allows us to "unwrap" the mesh into a rectangular shape which is topologically equivalent to a disk as desired. 
 
+\subsubsection{Compatibility Conditions}
+Since the frame field is symmetric under rotation by $\pi/2$, we can pick which direction $\theta_i$ and $\theta_i + \pi/2$ to align the $u$ and $v$ gradients in triangle $T_i$. We require this by ensuring that the $(u,v)$ parameters on both sides of a cut edge satisfy 
+\begin{equation*}
+    (u', v') = \text{Rot}_{\pi/2}^i(u,v) + (j,k),
+\end{equation*}
+where $\text{Rot}_{\pi/2}^i$ is a rotation by $i \cdot \pi/2$ for $i = 0, 1, 2, 3$ and $(j,k) \in \mathbb{Z}^2$ is an integer translation. This ensures that the parameterization is continuous across the cut edges up to a rotation and translation. To reduce the number of unknowns, the rotation coefficients $i$ can be computed by propagating a global choice of orientation. After cutting, we pick a random face and propagate its orientation in a breadth-first manner to all the neighboring faces across non-cut edges. The rotation across cut edges is then determined by the difference in orientation of the two adjacent faces. 
 
-
-
-\clearpage
+Combining the orientation constraints with the energy minimization, we obtain a mixed-integer problem where we solve for the real-valued $(u,v)$ parameters at each vertex and the integer translations $(j,k)$ at each cut edge. This is solved using the greedy mixed-integer solver described earlier. Finally, we extract the quadrilateral mesh by tracing the integer isolines of $u$ and $v$ over the triangular mesh.
 
 % --- RESULTS ---
+
 \section{Results}
+Using this methodology, we implement the full pipeline in Julia to generate structured quadrilateral meshes from triangular input meshes. See Appendix \ref{app:code} for the full code listings. We present the results for the smooth frame field generation but unfortunately were not able to complete the quadrilateral mesh extraction step in time for this report.
+
+\subsection{Frame Field Generation Results}
+\subsubsection{DAE11 Airfoil Example}
+Looking at the DAE11 airfoil example shown in Figure \ref{fig:frame_field_result}, we see that the generated frame field smoothly curves around the airfoil geometry. We see that there are no singularities in this frame field meaning that the resulting quadrilateral mesh will be fully regular with all vertices having valence 4. To have the frame field align with the airfoil geometry, we constrained the frame directions on the airfoil surface to be tangential to the surface. This is done by setting $\theta_i$ for all faces $i$ adjacent to the airfoil boundary to be equal to the angle of the edge aligned with the airfoil surface. Now extracting the $\mathbf{u}_T$ and $\mathbf{v}_T$ directions from the frame field as shown in Figure \ref{fig:uv_vectors}, we see that they also smoothly curve around the airfoil geometry as desired. Finally, we solve for the global parameterization $(u,v)$ over the triangular mesh which aligns with these directions. The resulting parameterization is shown in Figure \ref{fig:parameterization} where we see that the isolines of $u$ and $v$.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.75\textwidth,height=\textwidth,keepaspectratio]{../frame_field_extract/output/quad_extraction_w.png}
+    \caption{Resulting parameterization $(u,v)$ over the DAE11 airfoil triangular mesh. The isolines of $u$ and $v$ are shown in blue and red respectively.}
+    \label{fig:parameterization}
+\end{figure}
 
 
-\clearpage
+\subsubsection{Rentrant Corner Example}
+The pipeline was run on a corner domain. The solutions are summarized in Figure \ref{fig:three_plots}. 
 
-% --- DISCUSSION ---
+
 \section{Discussion}
+Looking at the resulting quadrilateral mesh extracted from the parameterization for the DAE11 airfoil example shown in Figure \ref{fig:parameterization}, we see that the mesh has signficant distortion in four areas above and below the leading and trailing edge. We see the isolines swirl around a point. I think these are the result of singularities in the frame field that were not properly captured during the computation of the index at each vertex. I'm not confident in my computation of equations (3) to (5) for a general triangulation and I think this is where the issue lies. Once the singularities are properly captured, the algorithm will cut the mesh accordingly and prevent these swirling isolines. Looking at the corner domain example shown in Figure \ref{fig:three_plots}, we see similar swirling isolines issues further indicating that the singularities were not properly calculated.
 
-
-\clearpage
+While the greedy mixed-integer solver performed well for the frame field generation step, I found that it struggled to converge for the parameterization step. This is due to our miscalculation of the singularities and the lack of penalization terms in the energy function shown in Equation (9). Bommes et al.~\cite{bommes2009mixed} introduce additional penalization terms to the energy function to penalize large integer translations across cut edges and to penalize deviation from a uniform scaling factor $h$. These terms help the solver converge to a better solution. Implementing these terms should be straightforward and is left for future work.
 
 % --- CONCLUSION ---
 \section{Conclusion}
+In this paper, we have presented a methodology for automatic structured quadrilateral grid generation using frame fields. By implementing the Mixed-Integer Quadrangulation (MIQ) method in Julia, we have not quite demonstrated the ability to automatically generate structured quadrilateral meshes that align with geometric features, we hope the motivation and application is evident. The method also provides an approach to automatic block decomposition for multi-block structured grid generation where each block boundary can taken along the cut edges. Future work will focus on improving the quality of the generated meshes and the robustness of the algorithm for complex geometries. Once I have a working 2D generator, I plan to extend this work to a three-dimensional hexahedral mesh generation using 3D frame fields to provide a complete solution for automatic structured mesh generation in CFD applications. Overall I really enjoyed reading and understanding the paper by Bommes et al.~\cite{bommes2009mixed} and implementing the algorithm in Julia. The authors made it a wonderful learning experience and introduction to frame field driven grid generation.
 
 
-
+\begin{figure}[htbp]
+    \centering
+    
+    % --- First Subplot (Top Left) ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        % Replace 'example-image-a' with your filename
+        \includegraphics[width=\textwidth]{../frame_field_extract/output/corner-framefield.png}
+        \caption{Frame field around the corner domain}
+        \label{fig:plot_a}
+    \end{subfigure}
+    \hfill % Adds flexible space between images
+    % --- Second Subplot (Top Right) ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../frame_field_extract/output/corner-uv.png}
+        \caption{Extracted $\mathbf{u}_T$ and $\mathbf{v}_T$ for the corner domain}
+        \label{fig:plot_b}
+    \end{subfigure}
+    
+    % --- Spacing between rows ---
+    \par\bigskip 
+    
+    % --- Third Subplot (Bottom Centered) ---
+    \begin{subfigure}[b]{0.6\textwidth} % Width can be adjusted
+        \centering
+        \includegraphics[width=\textwidth]{../frame_field_extract/output/corner-param.png}
+        \caption{Extracted parameterization for the corner domain}
+        \label{fig:plot_c}
+    \end{subfigure}
+    
+    \caption{Results for the corner domain example. (a) The resulting smooth frame field around the corner geometry. (b) Extracted $\mathbf{u}_T$ and $\mathbf{v}_T$ for the corner domain. (c) Resulting parameterization $(u,v)$ over the corner triangular mesh. The isolines of $u$ and $v$ are shown in blue and red respectively.}
+    \label{fig:three_plots}
+\end{figure}
 % --- REFERENCES ---
+\bibliographystyle{plain}
+\bibliography{references}
 
 \clearpage 
 % --- APPENDIX ---
 \appendix
 \section{Julia Code Listings}
 \label{app:code}
-
 All code used in this project is available at the following GitHub repository: \url{https://github.com/MarvynBailly/Structured-Grid-Generation-via-Frame-Fields}.
+
+\begin{algorithm}
+\caption{Greedy Mixed-Integer Solver}
+\label{alg:greedy_solver}
+\KwIn{System matrix $A$, right-hand side $b$, number of integer variables $k$, threshold $\tau$}
+\KwOut{Solution vector $\vec{x}$ with integer values for $x_1, \ldots, x_k$}
+
+\BlankLine
+
+\tcp{Solve continuous relaxation}
+Solve linear system $A\vec{x}^0 = b$ for all variables\;
+$\text{rounded} \leftarrow \emptyset$\;
+
+\BlankLine
+
+\tcp{Round integer variables greedily}
+\For{$i = 1$ \KwTo $k$}{
+    \tcp{Find variable with minimum rounding error}
+    $j \leftarrow \arg\min_{j \in \{1,\ldots,k\} \setminus \text{rounded}} |x_j^{i-1} - \text{round}(x_j^{i-1})|$\;
+    
+    \tcp{Round and fix variable}
+    $x_j \leftarrow \text{round}(x_j^{i-1})$\;
+    $\text{rounded} \leftarrow \text{rounded} \cup \{j\}$\;
+    
+    \BlankLine
+    
+    \tcp{Update affected continuous variables using Gauss-Seidel}
+    \tcp{Q contains indices $m$ where $A_{mj} \neq 0$ (row $j$ has nonzero entry)}
+    $Q \leftarrow \{ m : A_{mj} \neq 0 \}$\;
+    
+    \While{($Q$ is not empty) and (iteration count $<$ max\_iterations)}{
+        $m \leftarrow Q.\text{pop}()$\;
+        
+        \tcp{Compute local residual}
+        $r_m \leftarrow b_m - \sum_{n} A_{mn} x_n$\;
+        
+        \If{$|r_m| \geq \tau$}{
+            \tcp{Update variable}
+            $x_m \leftarrow x_m - r_m / A_{mm}$\;
+            
+            \tcp{Add dependent variables to queue}
+            \For{each $n$ where $A_{nm} \neq 0$}{
+                $Q.\text{push}(n)$\;
+            }
+        }
+    }
+}
+
+\BlankLine
+
+\Return{$\vec{x}$}\;
+\end{algorithm}
+
+
+
 
 \section{Reference Paper}
 \label{app:paper}
 
-The following pages contain the full text of Bommes et al. %(2009) \cite{bommes2009mixed}.
-
-% Include the PDF file (place bommes2009.pdf in the same directory)
-% \includepdf[pages=-,pagecommand={},width=\textwidth]{Bommes-2009-MIQ.pdf}
+Include the PDF file (place bommes2009.pdf in the same directory)
+\includepdf[pages=-,pagecommand={},width=\textwidth]{Bommes-2009-MIQ.pdf}
 
 \end{document}

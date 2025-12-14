@@ -192,16 +192,44 @@ function initialize_field(topo, constraints)
     return CrossField(topo, theta, p_jumps, kappa, constraints, fixed)
 end
 
-function build_spanning_tree!(field)
-    visited = falses(length(field.topology.faces)); queue = Int[]
-    start = isempty(field.constrained_faces) ? 1 : first(keys(field.constrained_faces))
-    push!(queue, start); visited[start] = true
+function build_spanning_tree!(field; verbose=false)
+    visited = falses(length(field.topology.faces))
+    queue = Int[]
+    
+    if verbose
+        println("\n--- Building Spanning Forest ---")
+    end
+    
+    # Initialize queue with ALL constrained faces (creates a forest, not just a tree)
+    n_roots = 0
+    if !isempty(field.constrained_faces)
+        for f in keys(field.constrained_faces)
+            push!(queue, f)
+            visited[f] = true
+            n_roots += 1
+        end
+        if verbose
+            println("Starting from $n_roots constrained faces (roots)")
+        end
+    else
+        # Fallback: if no constraints, start from face 1
+        push!(queue, 1)
+        visited[1] = true
+        n_roots = 1
+        if verbose
+            println("No constrained faces - starting from face 1")
+        end
+    end
+    
     while !isempty(queue)
         u = popfirst!(queue)
         for (v, _) in field.topology.dual_adj[u]
             if !visited[v]
-                visited[v] = true; push!(queue, v)
-                key = minmax(u, v); push!(field.fixed_edges, key); field.period_jumps[key] = 0
+                visited[v] = true
+                push!(queue, v)
+                key = minmax(u, v)
+                push!(field.fixed_edges, key)
+                field.period_jumps[key] = 0
             end
         end
     end
@@ -281,7 +309,7 @@ function assemble_system_weighted(field)
             vi = topo.faces[i]; vj = topo.faces[j]; shared = intersect(vi, vj)
             p1 = topo.vertices[shared[1]]; p2 = topo.vertices[shared[2]]
             len_sq = (p1.x-p2.x)^2 + (p1.y-p2.y)^2 + (p1.z-p2.z)^2
-            weight = 1.0 / (sqrt(len_sq) + 1e-6)
+            weight = 1.0 #/ (sqrt(len_sq) + 1e-6)
             # ---------------------
             
             # RHS
@@ -360,17 +388,23 @@ function local_gauss_seidel_queue!(A, b, x, fixed_mask, start_node, diag_A)
     return iter
 end
 
-function solve_greedy!(field; verbose=true)
-    println("--- Starting Unified MIQ Solver ---")
-    build_spanning_tree!(field)
+function solve_greedy!(field; verbose=false)
+    if verbose
+        println("--- Starting Unified MIQ Solver ---")
+    end
+    build_spanning_tree!(field; verbose=verbose)
     
     # 1. Build System
-    println("Assembling system...")
+    if verbose
+        println("Assembling system...")
+    end
     A, b, theta_map, p_map = assemble_system_weighted(field)
     n_vars = length(b)
     
     # 2. Initial Solve
-    println("Initial solve...")
+    if verbose
+        println("Initial solve...")
+    end
     x = A \ b
     
     # 3. Greedy Rounding
@@ -379,7 +413,9 @@ function solve_greedy!(field; verbose=true)
     diag_A = [A[i,i] for i in 1:n_vars]
     
     num_p = length(int_indices)
-    println("Greedy rounding $num_p integer variables...")
+    if verbose
+        println("Greedy rounding $num_p integer variables...")
+    end
     
     count = 0
     while true
@@ -416,7 +452,9 @@ function solve_greedy!(field; verbose=true)
     for (edge, idx) in p_map
         field.period_jumps[edge] = Int(round(x[idx]))
     end
-    println("--- Solver Complete ---")
+    if verbose
+        println("--- Solver Complete ---")
+    end
 end
 
 # ==============================================================================
@@ -436,8 +474,10 @@ function build_vertex_to_faces(topo::MeshTopology)
     return v2f
 end
 
-function compute_singularities(field::CrossField)
-    println("\n--- Computing Singularities (Normalized) ---")
+function compute_singularities(field::CrossField; verbose=false)
+    if verbose
+        println("\n--- Computing Singularities (Normalized) ---")
+    end
     topo = field.topology
     v2f = build_vertex_to_faces(topo)
     singularities = Tuple{Int, Float64}[]
@@ -484,7 +524,7 @@ function compute_singularities(field::CrossField)
         n_star = length(star)
         min_angle = Inf
         
-        println("\n=== Vertex $v_idx (star size: $n_star) ===")
+        # println("\n=== Vertex $v_idx (star size: $n_star) ===")
         
         for i in 1:n_star
             curr = star[i]; next = star[mod1(i+1, n_star)]
@@ -499,12 +539,12 @@ function compute_singularities(field::CrossField)
             ang_sum += angle_at_vertex
             min_angle = min(min_angle, angle_at_vertex)
             
-            @printf("  Face %d: angle = %.4f rad (%.2f deg)\n", curr, angle_at_vertex, rad2deg(angle_at_vertex))
+            # @printf("  Face %d: angle = %.4f rad (%.2f deg)\n", curr, angle_at_vertex, rad2deg(angle_at_vertex))
             
             # Transport
             k = haskey(field.transport_angles, (curr, next)) ? field.transport_angles[(curr,next)] : -field.transport_angles[(next,curr)]
             k_sum += k
-            @printf("  Edge (%d->%d): kappa = %.4f rad (%.2f deg)\n", curr, next, k, rad2deg(k))
+            # @printf("  Edge (%d->%d): kappa = %.4f rad (%.2f deg)\n", curr, next, k, rad2deg(k))
             
             # Period Jump (NORMALIZED)
             edge = minmax(curr, next)
@@ -513,35 +553,40 @@ function compute_singularities(field::CrossField)
             if haskey(field.period_jumps, edge)
                 raw_p = field.period_jumps[edge]
                 
-                # --- CHANGE IS HERE ---
-                # Remove windings of 4 (360 degrees)
-                # This maps ..., -4, 0, 4, ... -> 0
-                # And ..., -5, -1, 3, ... -> -1
-                norm_p = raw_p - 4 * round(raw_p / 4)
-                @printf("  Edge %s: raw_p = %d -> norm_p = %d (sign = %.1f, contribution = %.2f)\n", 
-                        edge, raw_p, Int(norm_p), sign, norm_p * sign)
-                p_sum += norm_p * sign
+                # For cross fields (4-RoSy), period jumps represent multiples of π/2
+                # No normalization needed - the raw value is what we need
+                # The division by 4 in the index formula handles the periodicity
+                # @printf("  Edge %s: raw_p = %d (sign = %.1f, contribution = %.2f)\n", 
+                #         edge, raw_p, sign, raw_p * sign)
+                p_sum += raw_p * sign
             else
                 println("  Edge $edge: no period jump")
             end
         end
         
-        angle_defect = 2π - ang_sum
+        angle_defect = 0 #2π - ang_sum
+        # For cross fields: index = (angle_defect)/(2π) + (kappa_sum)/(2π) + (period_sum)/4
+        # The period_sum/4 accounts for the 4-fold symmetry (π/2 periodicity)
         I = (angle_defect + k_sum)/(2π) + p_sum/4.0
         
-        @printf("  Angle sum: %.4f rad (%.2f deg)\n", ang_sum, rad2deg(ang_sum))
-        @printf("  Angle defect: %.4f rad (%.2f deg)\n", angle_defect, rad2deg(angle_defect))
-        @printf("  Kappa sum: %.4f rad (%.2f deg)\n", k_sum, rad2deg(k_sum))
-        @printf("  Period sum: %.4f\n", p_sum)
-        @printf("  Min angle: %.4f rad (%.2f deg)\n", min_angle, rad2deg(min_angle))
-        @printf("  INDEX = (%.4f + %.4f)/(2π) + %.4f/4 = %.4f\n", angle_defect, k_sum, p_sum, I)
+        # Round to nearest 1/4 for cross fields
+        # I_rounded = round(I * 4) / 4
+        # @printf("  INDEX rounded to nearest 1/4: %.4f (%.2f/4)\n", I_rounded, I_rounded * 4)
         
         # Check for degenerate geometry
-        is_degenerate = (min_angle < MIN_ANGLE_THRESHOLD) || (ang_sum < MIN_ANGLE_SUM_THRESHOLD)
+        is_degenerate = (min_angle < MIN_ANGLE_THRESHOLD) #|| (ang_sum < MIN_ANGLE_SUM_THRESHOLD)
         
         if is_degenerate
-            println("  ⚠️  DEGENERATE VERTEX SKIPPED (nearly-zero angles indicate bad mesh quality)")
-            degenerate_vertices_skipped += 1
+            # println("  ⚠️  DEGENERATE VERTEX SKIPPED (nearly-zero angles indicate bad mesh quality)")
+            # degenerate_vertices_skipped += 1
+            #             @printf("  Angle sum: %.4f rad (%.2f deg)\n", ang_sum, rad2deg(ang_sum))
+            # @printf("  Angle defect: %.4f rad (%.2f deg)\n", angle_defect, rad2deg(angle_defect))
+            # @printf("  Kappa sum: %.4f rad (%.2f deg)\n", k_sum, rad2deg(k_sum))
+            # @printf("  Period sum (raw): %.4f\n", p_sum)
+            # @printf("  Min angle: %.4f rad (%.2f deg)\n", min_angle, rad2deg(min_angle))
+            # @printf("  INDEX = (%.4f + %.4f)/(2π) + %.4f/4 = %.4f\n", angle_defect, k_sum, p_sum, I)
+            # @printf("  INDEX breakdown: geom=(%.4f) + period=(%.4f) = %.4f\n", 
+            #     (angle_defect + k_sum)/(2π), p_sum/4.0, I)
             continue
         end
         
@@ -554,21 +599,32 @@ function compute_singularities(field::CrossField)
         if abs(I) > 0.15
             push!(singularities, (v_idx, I))
             println("  ⚠️  SINGULARITY DETECTED!")
+            @printf("  Angle sum: %.4f rad (%.2f deg)\n", ang_sum, rad2deg(ang_sum))
+            @printf("  Angle defect: %.4f rad (%.2f deg)\n", angle_defect, rad2deg(angle_defect))
+            @printf("  Kappa sum: %.4f rad (%.2f deg)\n", k_sum, rad2deg(k_sum))
+            @printf("  Period sum (raw): %.4f\n", p_sum)
+            @printf("  Min angle: %.4f rad (%.2f deg)\n", min_angle, rad2deg(min_angle))
+            @printf("  INDEX = (%.4f + %.4f)/(2π) + %.4f/4 = %.4f\n", angle_defect, k_sum, p_sum, I)
+            @printf("  INDEX breakdown: geom=(%.4f) + period=(%.4f) = %.4f\n", 
+                (angle_defect + k_sum)/(2π), p_sum/4.0, I)
+       
         end
     end
     
     # Print statistics
-    println("\n=== SINGULARITY STATISTICS ===")
-    println("Boundary vertices skipped: $boundary_vertices_skipped")
-    println("Degenerate vertices skipped: $degenerate_vertices_skipped")
-    println("Total valid interior vertices analyzed: $(length(all_indices))")
-    println("Singularities found: $(length(singularities))")
-    if degenerate_vertices_skipped > 0
-        println("\n⚠️  WARNING: $degenerate_vertices_skipped degenerate vertices detected!")
-        println("This indicates poor mesh quality (nearly flat/needle triangles).")
-        println("Consider remeshing with better quality constraints.")
+    if verbose
+        println("\n=== SINGULARITY STATISTICS ===")
+        println("Boundary vertices skipped: $boundary_vertices_skipped")
+        println("Degenerate vertices skipped: $degenerate_vertices_skipped")
+        println("Total valid interior vertices analyzed: $(length(all_indices))")
+        println("Singularities found: $(length(singularities))")
+        if degenerate_vertices_skipped > 0
+            println("\n⚠️  WARNING: $degenerate_vertices_skipped degenerate vertices detected!")
+            println("This indicates poor mesh quality (nearly flat/needle triangles).")
+            println("Consider remeshing with better quality constraints.")
+        end
     end
-    if !isempty(all_indices)
+    if verbose && !isempty(all_indices)
         @printf("Index range: [%.4f, %.4f]\n", minimum(all_indices), maximum(all_indices))
         @printf("Index mean: %.4f, std: %.4f\n", sum(all_indices)/length(all_indices), 
                 sqrt(sum((all_indices .- sum(all_indices)/length(all_indices)).^2)/length(all_indices)))
@@ -582,7 +638,9 @@ function compute_singularities(field::CrossField)
     end
     
     # Compute Euler characteristic and verify topological constraint
-    println("\n=== TOPOLOGICAL VERIFICATION ===")
+    if verbose
+        println("\n=== TOPOLOGICAL VERIFICATION ===")
+    end
     n_vertices = length(topo.vertices)
     n_faces = length(topo.faces)
     
@@ -596,8 +654,6 @@ function compute_singularities(field::CrossField)
     n_edges = length(edge_set)
     
     euler_char = n_vertices - n_edges + n_faces
-    @printf("Mesh topology: V=%d, E=%d, F=%d\n", n_vertices, n_edges, n_faces)
-    @printf("Euler characteristic χ = V - E + F = %d\n", euler_char)
     
     # Determine genus and expected index sum
     # For orientable surfaces: χ = 2 - 2g (g = genus)
@@ -605,41 +661,82 @@ function compute_singularities(field::CrossField)
     genus = (2 - euler_char) / 2
     expected_index_sum = euler_char / 2.0
     
-    @printf("Genus g = %.1f ", genus)
-    if abs(genus - round(genus)) < 0.01
-        g_int = Int(round(genus))
-        if g_int == 0; println("(topological sphere)")
-        elseif g_int == 1; println("(topological torus)")
-        else; println("(genus-$g_int surface)")
+    if verbose
+        @printf("Mesh topology: V=%d, E=%d, F=%d\n", n_vertices, n_edges, n_faces)
+        @printf("Euler characteristic χ = V - E + F = %d\n", euler_char)
+        @printf("Genus g = %.1f ", genus)
+        if abs(genus - round(genus)) < 0.01
+            g_int = Int(round(genus))
+            if g_int == 0; println("(topological sphere)")
+            elseif g_int == 1; println("(topological torus)")
+            else; println("(genus-$g_int surface)")
+            end
+        else
+            println("(non-integer genus - mesh may have boundary or be non-orientable)")
         end
-    else
-        println("(non-integer genus - mesh may have boundary or be non-orientable)")
+        
+        @printf("\nExpected singularity index sum (for cross field): %.4f\n", expected_index_sum)
     end
-    
-    @printf("\nExpected singularity index sum (for cross field): %.4f\n", expected_index_sum)
     
     if !isempty(singularities)
         actual_index_sum = sum(I for (_, I) in singularities)
-        @printf("Actual singularity index sum: %.4f\n", actual_index_sum)
-        @printf("Difference: %.4f\n", abs(actual_index_sum - expected_index_sum))
         
-        if abs(actual_index_sum - expected_index_sum) < 0.3
-            println("✓ Singularity sum matches topological constraint!")
-        else
-            println("⚠️  WARNING: Singularity sum does not match expected value!")
-            println("   This could indicate:")
-            println("   - Missing singularities (filtered as degenerate)")
-            println("   - Incorrect period jumps")
-            println("   - Mesh topology issues")
+        if verbose
+            @printf("Actual singularity index sum: %.4f\n", actual_index_sum)
+            @printf("Difference: %.4f\n", abs(actual_index_sum - expected_index_sum))
+            
+            if abs(actual_index_sum - expected_index_sum) < 0.3
+                println("✓ Singularity sum matches topological constraint!")
+            else
+                println("⚠️  WARNING: Singularity sum does not match expected value!")
+                println("   This could indicate:")
+                println("   - Missing singularities (filtered as degenerate)")
+                println("   - Incorrect period jumps")
+                println("   - Mesh topology issues")
+            end
         end
         
         # Show individual singularities
-        println("\nDetected singularities:")
+        if verbose
+            println("\nDetected singularities:")
+        end
+        high_valence_count = 0
         for (v_idx, I) in singularities
             p = topo.vertices[v_idx]
-            @printf("  Vertex %d at (%.4f, %.4f): index = %.4f\n", v_idx, p.x, p.y, I)
+            I_rounded = round(I * 4) / 4
+            k = Int(round(I_rounded * 4))  # Index as k/4
+            valence = 4 - k  # Quad mesh valence
+            
+            if verbose
+                @printf("  Vertex %d at (%.4f, %.4f):\n", v_idx, p.x, p.y)
+                @printf("    Index = %.4f ≈ %d/4 = %.4f\n", I, k, I_rounded)
+                @printf("    Quad mesh valence = 4 - (%d) = %d", k, valence)
+            end
+            
+            if valence < 3 || valence > 5
+                if verbose
+                    print(" ⚠️  HIGH VALENCE!")
+                end
+                high_valence_count += 1
+            end
+            if verbose
+                println()
+            end
         end
-    else
+        
+        if verbose && high_valence_count > 0
+            println("\n⚠️  WARNING: $high_valence_count high-valence singularities detected!")
+            println("Ideal quad meshes should only have valence-3 and valence-5 vertices.")
+            println("High valence vertices indicate:")
+            println("  - Poor triangle mesh quality (check for degenerate triangles)")
+            println("  - Solver producing incorrect period jumps")
+            println("  - Possible issues with boundary constraints")
+            println("\nSuggestions:")
+            println("  1. Try a different mesh with better quality")
+            println("  2. Verify boundary constraints are aligned with mesh edges")
+            println("  3. Check if $degenerate_vertices_skipped degenerate vertices are hiding the real singularities")
+        end
+    elseif verbose
         @printf("No singularities detected, but expected sum: %.4f\n", expected_index_sum)
         if abs(expected_index_sum) > 0.1
             println("⚠️  This suggests singularities are missing (possibly filtered as degenerate)")
@@ -649,7 +746,7 @@ function compute_singularities(field::CrossField)
     return singularities
 end
 
-function plot_results(field, filename)
+function plot_results(field, filename; verbose=false)
     fig = Figure(size=(1000, 800))
     ax = Axis(fig[1, 1], aspect=DataAspect(), title="MIQ Solution (Constrained Faces & Singularities)")
     
@@ -657,6 +754,40 @@ function plot_results(field, filename)
     for tri in field.topology.faces
         pts = [field.topology.vertices[i] for i in tri]; push!(pts, pts[1])
         lines!(ax, [p.x for p in pts], [p.y for p in pts], color=:gray90, linewidth=0.5)
+    end
+    
+    # Determine sampling rate based on mesh size
+    n_faces = length(field.topology.faces)
+    sample_rate = if n_faces < 1000
+        1  # Show all crosses
+    elseif n_faces < 10000
+        2  # Show every 2nd
+    elseif n_faces < 50000
+        5  # Show every 5th
+    elseif n_faces < 200000
+        10  # Show every 10th
+    else
+        500  # Show every 500th for very large meshes
+    end
+    
+    if verbose && sample_rate > 1
+        println("Plotting every $(sample_rate)th cross field (mesh has $n_faces faces)")
+    end
+    
+    # Visualize spanning tree edges (fixed edges with p=0)
+    for edge in field.fixed_edges
+        # Find the two faces that share this edge
+        i, j = edge
+        # Get centroids of both faces
+        tri_i = field.topology.faces[i]
+        cx_i = (field.topology.vertices[tri_i[1]].x + field.topology.vertices[tri_i[2]].x + field.topology.vertices[tri_i[3]].x)/3
+        cy_i = (field.topology.vertices[tri_i[1]].y + field.topology.vertices[tri_i[2]].y + field.topology.vertices[tri_i[3]].y)/3
+        
+        tri_j = field.topology.faces[j]
+        cx_j = (field.topology.vertices[tri_j[1]].x + field.topology.vertices[tri_j[2]].x + field.topology.vertices[tri_j[3]].x)/3
+        cy_j = (field.topology.vertices[tri_j[1]].y + field.topology.vertices[tri_j[2]].y + field.topology.vertices[tri_j[3]].y)/3
+        
+        lines!(ax, [cx_i, cx_j], [cy_i, cy_j], color=:green, linewidth=2, alpha=0.6)
     end
     
     # Highlight constrained faces
@@ -674,6 +805,11 @@ function plot_results(field, filename)
     xs_sec, ys_sec, us_sec, vs_sec = Float64[], Float64[], Float64[], Float64[]
     
     for i in 1:length(field.topology.faces)
+        # Skip faces based on sampling rate
+        if i % sample_rate != 0
+            continue
+        end
+        
         re = field.topology.face_ref_edges[i]
         p1 = field.topology.vertices[re[1]]; p2 = field.topology.vertices[re[2]]
         ref_ang = atan(p2.y - p1.y, p2.x - p1.x)
@@ -698,7 +834,7 @@ function plot_results(field, filename)
     arrows2d!(ax, xs_main, ys_main, us_main, vs_main, color=:red)#, arrowsize=0, lengthscale=1.0, linewidth=2)
     
     # Singularities
-    sings = compute_singularities(field)
+    sings = compute_singularities(field; verbose=verbose)
     pos = Point2f[]; neg = Point2f[]
     for (v, I) in sings
         p = field.topology.vertices[v]
@@ -714,43 +850,219 @@ function plot_results(field, filename)
         lines!(ax, [NaN], [NaN], color=:orange, linewidth=2, label="Constrained Faces")
     end
     
-    if !isempty(pos) || !isempty(neg) || !isempty(field.constrained_faces)
+    # Add spanning tree to legend
+    if !isempty(field.fixed_edges)
+        lines!(ax, [NaN], [NaN], color=:green, linewidth=2, alpha=0.6, label="Spanning Tree")
+    end
+    
+    if !isempty(pos) || !isempty(neg) || !isempty(field.constrained_faces) || !isempty(field.fixed_edges)
         axislegend(ax)
     end
     
     save(filename, fig)
-    println("Saved visualization to $filename")
-    println("Found $(length(sings)) singularities.")
+    if verbose
+        println("Saved visualization to $filename")
+        println("Found $(length(sings)) singularities.")
+    end
 end
 
 # ==============================================================================
 # 6. MAIN
 # ==============================================================================
+# ==============================================================================
+# 7. MESH CUTTING WITH GIF GENERATION
+# ==============================================================================
 
-function main()
-    # Replace with your file
-    filename = "triangulations/mesh_airfoil_dae11.su2" 
+function compute_cut_graph_animated(topo::MeshTopology, gif_filename="cut_pruning.gif")
+    println("\n--- Computing Cut Graph (Animated) ---")
+    n_faces = length(topo.faces)
     
-    if !isfile(filename)
-        println("File not found: $filename")
-        return
+    # 1. Build Dual Spanning Tree
+    visited_face = falses(n_faces)
+    tree_edges = Set{Tuple{Int,Int}}()
+    queue = Int[1]; visited_face[1] = true
+    
+    while !isempty(queue)
+        f_curr = popfirst!(queue)
+        for (f_neigh, edge_key) in topo.dual_adj[f_curr]
+            if !visited_face[f_neigh]
+                visited_face[f_neigh] = true
+                push!(tree_edges, edge_key)
+                push!(queue, f_neigh)
+            end
+        end
     end
+    
+    # 2. Initial Cut Edges
+    current_cuts = Set{Tuple{Int,Int}}()
+    for i in 1:n_faces
+        for (j, key) in topo.dual_adj[i]
+            if i < j && !(key in tree_edges)
+                push!(current_cuts, key)
+            end
+        end
+    end
+    
+    # --- ANIMATION SETUP ---
+    # We will record the state of 'current_cuts' at each iteration
+    frames = Vector{Vector{Tuple{Int,Int}}}()
+    push!(frames, collect(current_cuts)) # Frame 0: Initial State
+    
+    # 3. Iterative Pruning (Logic)
+    println("Initial Cut Graph size: $(length(current_cuts)) edges")
+    
+    # Identify boundary
+    all_half_edges = Dict{Tuple{Int,Int}, Int}()
+    for tri in topo.faces
+        e1, e2, e3 = minmax(tri[1],tri[2]), minmax(tri[2],tri[3]), minmax(tri[3],tri[1])
+        all_half_edges[e1] = get(all_half_edges, e1, 0) + 1
+        all_half_edges[e2] = get(all_half_edges, e2, 0) + 1
+        all_half_edges[e3] = get(all_half_edges, e3, 0) + 1
+    end
+    boundary_verts = Set{Int}()
+    for (e, count) in all_half_edges; if count==1; push!(boundary_verts, e[1]); push!(boundary_verts, e[2]); end; end
+    
+    changed = true
+    iteration = 0
+    
+    while changed
+        changed = false
+        cut_adj = Dict{Int, Vector{Int}}()
+        for (u, v) in current_cuts
+            if !haskey(cut_adj, u); cut_adj[u] = Int[]; end
+            if !haskey(cut_adj, v); cut_adj[v] = Int[]; end
+            push!(cut_adj[u], v); push!(cut_adj[v], u)
+        end
+        
+        to_remove = Set{Tuple{Int,Int}}()
+        for (v, neighbors) in cut_adj
+            if length(neighbors) == 1 && !(v in boundary_verts)
+                neighbor = neighbors[1]
+                push!(to_remove, minmax(v, neighbor))
+                changed = true
+            end
+        end
+        
+        if !isempty(to_remove)
+            setdiff!(current_cuts, to_remove)
+            # Save frame for animation
+            iteration += 1
+            if iteration % 5 == 0 # Optimize: Save every 5th step to keep GIF size reasonable
+                push!(frames, collect(current_cuts))
+            end
+        end
+    end
+    
+    # Add final frame
+    push!(frames, collect(current_cuts))
+    println("Final Cut Graph size: $(length(current_cuts)) edges")
+    
+    # --- RENDER GIF ---
+    println("Rendering GIF with $(length(frames)) frames...")
+    
+    # Static Background Mesh (Optimize rendering)
+    mesh_xs, mesh_ys = Float64[], Float64[]
+    for tri in topo.faces
+        p1, p2, p3 = topo.vertices[tri[1]], topo.vertices[tri[2]], topo.vertices[tri[3]]
+        push!(mesh_xs, p1.x, p2.x, NaN, p2.x, p3.x, NaN, p3.x, p1.x, NaN)
+        push!(mesh_ys, p1.y, p2.y, NaN, p2.y, p3.y, NaN, p3.y, p1.y, NaN)
+    end
+    
+    # Observable for the cut lines
+    cut_xs = Observable(Float64[])
+    cut_ys = Observable(Float64[])
+    title_str = Observable("Initializing...")
+    
+    fig = Figure(size=(800, 600))
+    ax = Axis(fig[1, 1], title=title_str, aspect=DataAspect())
+    
+    # Plot background once
+    lines!(ax, mesh_xs, mesh_ys, color=(:gray, 0.2), linewidth=0.5)
+    
+    # Plot dynamic cuts
+    lines!(ax, cut_xs, cut_ys, color=:red, linewidth=2.0)
+    
+    record(fig, gif_filename, frames; framerate=10) do frame_edges
+        # Update observable
+        cx, cy = Float64[], Float64[]
+        for (u, v) in frame_edges
+            p1, p2 = topo.vertices[u], topo.vertices[v]
+            push!(cx, p1.x, p2.x, NaN)
+            push!(cy, p1.y, p2.y, NaN)
+        end
+        cut_xs[] = cx
+        cut_ys[] = cy
+        title_str[] = "Cut Graph Pruning: $(length(frame_edges)) edges"
+    end
+    
+    println("Saved animation to $gif_filename")
+    return current_cuts
+end
+
+# --- Update Main ---
+function main()
+    # filename = "triangulations/mesh_airfoil_dae11.su2" 
+    # filename = "triangulations/regular-square-8x8.msh"
+    # filename = "triangulations/disk-radial-fine.msh"
+    filename = "triangulations/crmhl_test.su2"
     
     println("Reading mesh...")
     verts, faces = read_mesh(filename)
     topo = build_topology(verts, faces)
     
-    println("Detecting boundaries...")
-    constraints = compute_boundary_constraints(topo)
-    println("Constrained $(length(constraints)) boundary faces.")
+    # Run Animated Cut Graph
+    cut_edges = compute_cut_graph_animated(topo, "cut_graph_pruning.gif")
     
-    field = initialize_field(topo, constraints)
-    
-    # Solve
-    solve_greedy!(field)
-        
-    # Visualize
-    plot_results(field, "miq_solution.png")
+    # Proceed (Visualization of final result still useful)
+    # plot_cut_graph(topo, cut_edges, "miq_cut_final.png")
 end
 
 main()
+
+
+# function main()
+#     # Replace with your file
+#     # filename = "triangulations/mesh_airfoil_dae11.su2" 
+#     # filename = "triangulations/regular-square-8x8.msh"
+#     # filename = "triangulations/disk-radial-fine.msh"
+#     filename = "triangulations/crmhl_test.su2"
+    
+#     if !isfile(filename)
+#         println("File not found: $filename")
+#         return
+#     end
+    
+#     println("Reading mesh...")
+#     verts, faces = read_mesh(filename)
+#     topo = build_topology(verts, faces)
+    
+#     println("Detecting boundaries...")
+#     constraints = compute_boundary_constraints(topo)
+#     println("Constrained $(length(constraints)) boundary faces.")
+    
+#     # Set verbosity
+#     verbose = false
+    
+#     if verbose
+#         println("\n⚠️  NOTE: High-valence singularities (valence > 5)a often indicate:")
+#         println("  1. Poor mesh quality (too many degenerate triangles)")
+#         println("  2. Incorrect boundary constraints")
+#         println("  3. Numerical issues in the solver")
+#         println("For best results, aim for only valence-3 and valence-5 irregular vertices.")
+#         println("This requires: good mesh quality + appropriate boundary alignment.\n")
+#     end
+    
+#     field = initialize_field(topo, constraints)
+    
+#     # Solve
+#     println("Solving cross field...")
+#     solve_greedy!(field; verbose=verbose)
+#     println("Cross field computed successfully.")
+    
+#     # Visualize
+#     println("Generating visualization...")
+#     plot_results(field, "miq_solution.png"; verbose=verbose)
+#     println("Complete! Visualization saved to miq_solution.png")
+# end
+
+# main()
