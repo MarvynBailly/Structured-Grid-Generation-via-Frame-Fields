@@ -460,7 +460,9 @@ function solve_greedy!(field; verbose=false, animate=false, frame_dir="animation
         field.theta[f] = x[idx]
     end
     for (edge, idx) in p_map
-        field.period_jumps[edge] = Int(round(x[idx]))
+        raw_p = Int(round(x[idx]))
+        # Normalize to [-1, 2] range (centered around 0)
+        field.period_jumps[edge] = mod(raw_p + 2, 4) - 2
     end
     
     # Save initial frame
@@ -511,7 +513,9 @@ function solve_greedy!(field; verbose=false, animate=false, frame_dir="animation
                 field.theta[f] = x[idx]
             end
             for (edge, idx) in p_map
-                field.period_jumps[edge] = Int(round(x[idx]))
+                raw_p = Int(round(x[idx]))
+                # Normalize to [-1, 2] range (centered around 0)
+                field.period_jumps[edge] = mod(raw_p + 2, 4) - 2
             end
             
             frame_path = joinpath(frame_dir, @sprintf("frame_%04d.png", frame_count))
@@ -535,7 +539,9 @@ function solve_greedy!(field; verbose=false, animate=false, frame_dir="animation
         field.theta[f] = x[idx]
     end
     for (edge, idx) in p_map
-        field.period_jumps[edge] = Int(round(x[idx]))
+        raw_p = Int(round(x[idx]))
+        # Normalize to [-1, 2] range (centered around 0)
+        field.period_jumps[edge] = mod(raw_p + 2, 4) - 2
     end
     
     if verbose
@@ -880,7 +886,7 @@ function plot_frame(field, filename, title_text; cut_edges=nothing, show_singula
     return nothing
 end
 
-function plot_results(field, filename; verbose=false, cut_edges=nothing)
+function plot_results(field, filename; verbose=false, cut_edges=nothing, show_period_jumps=false)
     fig = Figure(size=(1000, 800))
     ax = Axis(fig[1, 1], aspect=DataAspect(), title="MIQ Solution (Constrained Faces & Singularities)")
     
@@ -908,21 +914,61 @@ function plot_results(field, filename; verbose=false, cut_edges=nothing)
         println("Plotting every $(sample_rate)th cross field (mesh has $n_faces faces)")
     end
     
-    # Visualize spanning tree edges (fixed edges with p=0)
-    for edge in field.fixed_edges
-        # Find the two faces that share this edge
-        i, j = edge
-        # Get centroids of both faces
-        tri_i = field.topology.faces[i]
-        cx_i = (field.topology.vertices[tri_i[1]].x + field.topology.vertices[tri_i[2]].x + field.topology.vertices[tri_i[3]].x)/3
-        cy_i = (field.topology.vertices[tri_i[1]].y + field.topology.vertices[tri_i[2]].y + field.topology.vertices[tri_i[3]].y)/3
-        
-        tri_j = field.topology.faces[j]
-        cx_j = (field.topology.vertices[tri_j[1]].x + field.topology.vertices[tri_j[2]].x + field.topology.vertices[tri_j[3]].x)/3
-        cy_j = (field.topology.vertices[tri_j[1]].y + field.topology.vertices[tri_j[2]].y + field.topology.vertices[tri_j[3]].y)/3
-        
-        lines!(ax, [cx_i, cx_j], [cy_i, cy_j], color=:green, linewidth=2, alpha=0.6)
+    # Visualize period jumps if requested
+    if show_period_jumps
+        # Collect all period jump values to determine color range
+        p_values = [abs(p) for p in values(field.period_jumps)]
+        if !isempty(p_values)
+            max_p = maximum(p_values)
+            
+            # Plot edges colored by period jump magnitude
+            for ((i, j), p) in field.period_jumps
+                # Get centroids of both faces
+                tri_i = field.topology.faces[i]
+                cx_i = (field.topology.vertices[tri_i[1]].x + field.topology.vertices[tri_i[2]].x + field.topology.vertices[tri_i[3]].x)/3
+                cy_i = (field.topology.vertices[tri_i[1]].y + field.topology.vertices[tri_i[2]].y + field.topology.vertices[tri_i[3]].y)/3
+                
+                tri_j = field.topology.faces[j]
+                cx_j = (field.topology.vertices[tri_j[1]].x + field.topology.vertices[tri_j[2]].x + field.topology.vertices[tri_j[3]].x)/3
+                cy_j = (field.topology.vertices[tri_j[1]].y + field.topology.vertices[tri_j[2]].y + field.topology.vertices[tri_j[3]].y)/3
+                
+                # Color based on period jump value
+                # Use a colormap: blue (p=0) -> red (p=max)
+                color_val = abs(p) / max(max_p, 1)
+                edge_color = if p == 0
+                    (:green, 0.6)  # Zero jumps in green
+                elseif abs(p) == 1
+                    (:yellow, 0.8)  # Small jumps in yellow
+                else
+                    (:red, min(0.9, 0.5 + 0.4 * color_val))  # Larger jumps in red
+                end
+                
+                linewidth = abs(p) == 0 ? 1.5 : 2.5
+                lines!(ax, [cx_i, cx_j], [cy_i, cy_j], color=edge_color, linewidth=linewidth)
+            end
+            
+            if verbose
+                println("Period jumps range: [$(minimum(values(field.period_jumps))), $(maximum(values(field.period_jumps)))]")
+            end
+        end
+    else
+        # Visualize spanning tree edges (fixed edges with p=0)
+        for edge in field.fixed_edges
+            # Find the two faces that share this edge
+            i, j = edge
+            # Get centroids of both faces
+            tri_i = field.topology.faces[i]
+            cx_i = (field.topology.vertices[tri_i[1]].x + field.topology.vertices[tri_i[2]].x + field.topology.vertices[tri_i[3]].x)/3
+            cy_i = (field.topology.vertices[tri_i[1]].y + field.topology.vertices[tri_i[2]].y + field.topology.vertices[tri_i[3]].y)/3
+            
+            tri_j = field.topology.faces[j]
+            cx_j = (field.topology.vertices[tri_j[1]].x + field.topology.vertices[tri_j[2]].x + field.topology.vertices[tri_j[3]].x)/3
+            cy_j = (field.topology.vertices[tri_j[1]].y + field.topology.vertices[tri_j[2]].y + field.topology.vertices[tri_j[3]].y)/3
+            
+            lines!(ax, [cx_i, cx_j], [cy_i, cy_j], color=:green, linewidth=2, alpha=0.6)
+        end
     end
+    
     
     # Highlight constrained faces
     for (face_idx, _) in field.constrained_faces
@@ -963,9 +1009,9 @@ function plot_results(field, filename; verbose=false, cut_edges=nothing)
         end
     end
     # Draw secondary directions first (lighter color, in background)
-    arrows2d!(ax, xs_sec, ys_sec, us_sec, vs_sec, color=:blue)#, arrowsize=0, lengthscale=1.0)
+    arrows!(ax, xs_sec, ys_sec, us_sec, vs_sec, color=:blue)
     # Draw main direction on top (darker, more prominent)
-    arrows2d!(ax, xs_main, ys_main, us_main, vs_main, color=:red)#, arrowsize=0, lengthscale=1.0, linewidth=2)
+    arrows!(ax, xs_main, ys_main, us_main, vs_main, color=:red)
     
     # Singularities
     sings = compute_singularities(field; verbose=verbose)
@@ -1000,12 +1046,19 @@ function plot_results(field, filename; verbose=false, cut_edges=nothing)
         lines!(ax, [NaN], [NaN], color=:orange, linewidth=2, label="Constrained Faces")
     end
     
-    # Add spanning tree to legend
-    if !isempty(field.fixed_edges)
-        lines!(ax, [NaN], [NaN], color=:green, linewidth=2, alpha=0.6, label="Spanning Tree")
+    # Add period jump legend entries if shown
+    if show_period_jumps
+        lines!(ax, [NaN], [NaN], color=(:green, 0.6), linewidth=1.5, label="p = 0")
+        lines!(ax, [NaN], [NaN], color=(:yellow, 0.8), linewidth=2.5, label="|p| = 1")
+        lines!(ax, [NaN], [NaN], color=(:red, 0.9), linewidth=2.5, label="|p| ≥ 2")
+    else
+        # Add spanning tree to legend
+        if !isempty(field.fixed_edges)
+            lines!(ax, [NaN], [NaN], color=:green, linewidth=2, alpha=0.6, label="Spanning Tree")
+        end
     end
     
-    if !isempty(pos) || !isempty(neg) || !isempty(field.constrained_faces) || !isempty(field.fixed_edges)
+    if !isempty(pos) || !isempty(neg) || !isempty(field.constrained_faces) || !isempty(field.fixed_edges) || show_period_jumps
         axislegend(ax)
     end
     
@@ -1821,8 +1874,8 @@ end
 function main()
     # Replace with your file
     # filename = "triangulations/mesh_airfoil_dae11.su2" 
-    filename = "triangulations/regular-square-8x8.msh"
-    # filename = "triangulations/disk-radial-fine.msh"
+    # filename = "triangulations/regular-square-8x8.msh"
+    filename = "triangulations/disk-radial-fine.msh"
     # filename = "triangulations/crmhl_test.su2"
     
     if !isfile(filename)
@@ -1893,7 +1946,7 @@ function main()
     
     # Visualize
     println("Generating visualization...")
-    plot_results(field, "miq_solution.png"; verbose=verbose, cut_edges=cut_edges)
+    plot_results(field, "miq_solution.png"; verbose=verbose, cut_edges=cut_edges, show_period_jumps = true)
     println("Complete! Visualization saved to miq_solution.png")
     
     # Create animation GIF
