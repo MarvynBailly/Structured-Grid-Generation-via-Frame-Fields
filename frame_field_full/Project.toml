@@ -1,0 +1,11 @@
+name = "FrameFieldFull"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+authors = ["admin"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

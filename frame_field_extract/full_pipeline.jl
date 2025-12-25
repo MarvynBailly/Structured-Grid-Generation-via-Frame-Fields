@@ -1961,11 +1961,6 @@ function main()
             println("✓ GIF created successfully with Python!")
         catch e
             println("Python method failed. Frames are available in: $frame_dir")
-            println("\nTo create GIF manually:")
-            println("  Option 1 (ImageMagick): magick -delay 20 -loop 0 \"$frame_dir\\frame_*.png\" greedy_solver_animation.gif")
-            println("  Option 2 (FFmpeg): ffmpeg -framerate 5 -pattern_type glob -i \"$frame_dir\\frame_*.png\" animation.mp4")
-            println("  Option 3 (Python): python create_gif.py")
-            println("\nSee ANIMATION_README.md for more details.")
         end
     end
 end
