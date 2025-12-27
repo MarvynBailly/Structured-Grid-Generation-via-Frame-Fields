@@ -1,16 +1,17 @@
-using Pkg
-Pkg.activate("..")
 using FrameFieldFull
 using Printf
+
+
+include("visualize_cross_field.jl")
 
 function main()
     # --- Configuration ---
     # filename = "../../triangulations/disk-radial-fine.msh"
-    filename = "../../triangulations/mesh_airfoil_dae11.su2"
+    filename = "../triangulations/mesh_airfoil_dae11.su2"
     output_dir = "output"
     
     verbose = true
-    animate = true
+    animate = false
     frame_interval = 5
 
     # --- Setup ---
@@ -27,6 +28,7 @@ function main()
 
     println("Detecting boundaries...")
     constraints = compute_boundary_constraints(topo)
+    # constraints = Dict{Int, Float64}(1 => 0.0)  # Placeholder: Constrain face 1 to 0.0 radians
     
     field = initialize_field(topo, constraints)
 
@@ -65,25 +67,31 @@ function main()
     sings = compute_singularities(field; verbose=verbose)
     println("Found $(length(sings)) singularities.")
 
-    cut_edges = compute_cut_graph(topo)
-    
-    face_rotations, _ = propagate_orientations(field, cut_edges)
-    
-    println("Plotting globally smooth field...")
-    plot_smooth_global_field(field, face_rotations, joinpath(output_dir, "global_smooth_field.png"); 
-                             cut_edges=cut_edges, verbose=true)
-    
-    u_coords, v_coords = compute_parameterization_least_squares(field, face_rotations, cut_edges)
-    
-    quads, _ = extract_quad_mesh(topo, u_coords, v_coords; verbose=true)
+    # println("Optimizing singularity positions...")
+    # optimize_singularities!(field; verbose=verbose)
 
-    println("Plotting quad mesh...")
-    plot_quad_mesh(topo, u_coords, v_coords, quads, joinpath(output_dir, "quad_mesh_result.png"); verbose=true)
+
+    # cut_edges = compute_cut_graph(topo)
     
-    println("Generating final visualization...")
-    plot_results(field, joinpath(output_dir, "miq_solution.png"); verbose=verbose, cut_edges=cut_edges, show_period_jumps = true)
+    # face_rotations, _ = propagate_orientations(field, cut_edges)
     
-    println("\nComplete! All outputs saved to the '$output_dir' directory.")
+    # println("Plotting globally smooth field...")
+    # plot_smooth_global_field(field, face_rotations, joinpath(output_dir, "global_smooth_field.png"); 
+    #                          cut_edges=cut_edges, verbose=true)
+    
+    # u_coords, v_coords = compute_parameterization_least_squares(field, face_rotations, cut_edges)
+    
+    # quads, _ = extract_quad_mesh(topo, u_coords, v_coords; verbose=true)
+
+    # println("Plotting quad mesh...")
+    # plot_quad_mesh(topo, u_coords, v_coords, quads, joinpath(output_dir, "quad_mesh_result.png"); verbose=true)
+    
+    # println("Generating final visualization...")
+    # plot_results(field, joinpath(output_dir, "miq_solution_full_nopt.png"); verbose=verbose, cut_edges=nothing, show_period_jumps = true)
+    println("Visualizing...")
+    visualize_field(field)
+
+    # println("\nComplete! All outputs saved to the '$output_dir' directory.")
 end
 
 main()
