@@ -6,43 +6,7 @@ using FrameFieldFull.Topology
 using FrameFieldFull.Analysis
 import GeometryBasics
 
-# --- Helper: Convert Local Theta to Global Vector ---
-function get_global_vector(topo, f_idx, theta)
-    # 1. Get Reference Frame
-    tri = topo.faces[f_idx]
-    ref_edge = topo.face_ref_edges[f_idx] # (v_start, v_end)
-    
-    p1 = topo.vertices[ref_edge[1]]
-    p2 = topo.vertices[ref_edge[2]]
-    
-    # Basis X (e1) = Normalized Reference Edge
-    e1 = [p2.x - p1.x, p2.y - p1.y, p2.z - p1.z]
-    normalize!(e1)
-    
-    # Normal (n)
-    v1 = topo.vertices[tri[1]]
-    v2 = topo.vertices[tri[2]]
-    v3 = topo.vertices[tri[3]]
-    u = [v2.x - v1.x, v2.y - v1.y, v2.z - v1.z]
-    v = [v3.x - v1.x, v3.y - v1.y, v3.z - v1.z]
-    n = cross(u, v)
-    normalize!(n)
-    
-    # Basis Y (e2) = n x e1
-    e2 = cross(n, e1)
-    
-    # 2. Rotate in Tangent Plane
-    v_global = cos(theta) .* e1 .+ sin(theta) .* e2
-    return v_global
-end
 
-function get_face_center(topo, f_idx)
-    tri = topo.faces[f_idx]
-    p1 = topo.vertices[tri[1]]
-    p2 = topo.vertices[tri[2]]
-    p3 = topo.vertices[tri[3]]
-    return Point3f((p1.x+p2.x+p3.x)/3, (p1.y+p2.y+p3.y)/3, (p1.z+p2.z+p3.z)/3)
-end
 
 # --- Main Visualization Function ---
 function visualize_field(field::CrossField; title="Frame Field Debug", final_cuts=nothing, save_path=nothing, two_d=false)
@@ -76,9 +40,11 @@ function visualize_field(field::CrossField; title="Frame Field Debug", final_cut
     wireframe!(ax, geo_mesh, color=(:black, 0.1), linewidth=0.5)
     
     # 3. Plot Field Vectors
-    centers = Point3f[]
-    vectors = Vec3f[]
-    
+    main_direction = Vec3f[]
+    main_centers = Point3f[]
+    other_directions = Vec3f[]
+    other_centers = Point3f[]
+
     # Compute avg edge length for scaling
     total_len = 0.0
     count = 0
@@ -89,18 +55,30 @@ function visualize_field(field::CrossField; title="Frame Field Debug", final_cut
         count += 1
     end
     avg_len = count > 0 ? total_len / count : 1.0
-    vec_scale = avg_len * 0.4
+    vec_scale = avg_len * 0.2
     
     for i in 1:length(topo.faces)
         c = get_face_center(topo, i)
         v = get_global_vector(topo, i, field.theta[i])
         
-        push!(centers, c)
-        push!(vectors, Vec3f(v...))
+        push!(main_centers, c)
+        push!(main_direction, Vec3f(v...))
+        
+        # Compute and store other directions (90, 180, 270 degrees rotations)
+        for k in 1:3
+            theta_rot = field.theta[i] + k * (π/2)
+            v_rot = get_global_vector(topo, i, theta_rot)
+            push!(other_directions, Vec3f(v_rot...))
+            push!(other_centers, c)
+        end
     end
     
-    arrows2d!(ax, centers, vectors, lengthscale=vec_scale, 
-            shaftcolor=:black, tipcolor=:black, label="Field")
+    arrows2d!(ax, main_centers, main_direction, lengthscale=vec_scale, 
+            shaftcolor=:red, tipcolor=:red, label="Major Direction")
+
+    arrows2d!(ax, other_centers, other_directions, lengthscale=vec_scale, 
+            shaftcolor=:black, tipcolor=:black, label="Other Directions")
+    
             
     # 4. Plot Singularities
     sings = compute_singularities(field; verbose=false)

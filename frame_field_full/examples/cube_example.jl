@@ -5,6 +5,7 @@ using FrameFieldFull.Solver
 using FrameFieldFull.Analysis
 using FrameFieldFull.MeshIO
 using FrameFieldFull.Cutting
+using FrameFieldFull.Plotting
 using LinearAlgebra
 
 include("visualize_cross_field.jl")
@@ -131,9 +132,14 @@ function main()
     # cut the mesh M into a disk topology
     cuts = compute_cut_graph(topo, sings)
 
+    rotations = propagate_orientations(field, cuts; callback=nothing)
+
+    plot_global_rotations(field, rotations; save_path = joinpath("output", "global_rotations.png"), final_cuts=cuts, verbose=true, two_d = true)
+
+
 
     @info("Visualizing...")
-    visualize_field(field, title="Cube Flow (Chi=2)", final_cuts=cuts, save_path=save_file_path)
+    # visualize_field(field, title="Cube Flow (Chi=2)", final_cuts=cuts, save_path=save_file_path)
 end
 
 main()

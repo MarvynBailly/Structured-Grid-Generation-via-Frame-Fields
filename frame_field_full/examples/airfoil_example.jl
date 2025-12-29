@@ -5,10 +5,9 @@ using FrameFieldFull.Solver
 using FrameFieldFull.Analysis
 using FrameFieldFull.MeshIO
 using FrameFieldFull.Cutting
+using FrameFieldFull.Plotting
 using LinearAlgebra
-
-include("visualize_cross_field.jl")
-
+using Printf
 
 
 
@@ -163,7 +162,7 @@ end
 
 # --- 3. Run Pipeline ---
 function main()
-    upper_constraint = true
+    upper_constraint = false
     mesh_file = "airfoil_test.su2"
     save_path = "output/airfoil_upper$(upper_constraint)_cross_field.png"
     @info("Generating mesh...")
@@ -198,8 +197,39 @@ function main()
     # cut the mesh M into a disk topology
     cuts = compute_cut_graph(topo, sings)
 
-    @info("Visualizing...")
-    visualize_field(field, title="Airfoil Flow (Chi=0)", final_cuts=cuts, save_path=save_path, two_d=true)
+
+    # 1. Setup output directory
+    frame_dir = "debug_frames"
+    rm(frame_dir, recursive=true, force=true) # Clear old frames
+    mkpath(frame_dir)
+
+    # 2. Define the Callback
+    #    Captures 'field' and 'cuts' from your local scope
+    plot_step = 20 # Adjust this: smaller = smoother GIF, slower generation
+
+    # debug_callback = (current_rotations, iter) -> begin
+    #     if iter % plot_step == 0 || iter == 1
+    #         # Format filename: frame_0001.png, frame_0002.png...
+    #         fname = joinpath(frame_dir, @sprintf("frame_%05d.png", iter))
+            
+    #         # Call your plotting function
+    #         # Note: We pass 'current_rotations' which is partially filled (-1 for unvisited)
+    #         plot_smooth_global_field(field, current_rotations, fname; 
+    #                                 cut_edges=cuts, 
+    #                                 verbose=false)
+                                    
+    #         print(".") # Progress indicator
+    #     end
+    # end
+    debug_callback = nothing
+
+    # 2. Propagate Orientations (Step 1 of Param)
+    rotations = propagate_orientations(field, cuts; callback=debug_callback)
+
+    plot_global_rotations(field, rotations; save_path = joinpath("output", "global_rotations.png"), final_cuts=cuts, verbose=true, two_d = true)
+
+    # @info("Visualizing...")
+    # visualize_field(field, title="Airfoil Flow (χ=0)", final_cuts=cuts, save_path=save_path, two_d=true)
 end
 
 main()
