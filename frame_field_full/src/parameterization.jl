@@ -302,7 +302,15 @@ function compute_parameterization_least_squares(field::CrossField, cut_graph::Se
     
     for (edge, (idx_j, idx_k)) in sys.int_vars
         faces_sharing = find_faces_for_edge(topo, edge)
-        if length(faces_sharing) != 2; continue; end
+        if length(faces_sharing) != 2
+            if verbose
+                println("WARNING: Cut edge $edge has $(length(faces_sharing)) faces. Skipping constraint. This may cause singularity for vars $idx_j, $idx_k.")
+            end
+            # Add a small diagonal term to prevent singularity if skipped
+            add_entry!(idx_j, idx_j, 1e-9)
+            add_entry!(idx_k, idx_k, 1e-9)
+            continue
+        end
         f_A, f_B = faces_sharing[1], faces_sharing[2]
         
         # Compare Global Vectors to determine integer rotation
@@ -390,6 +398,25 @@ function compute_parameterization_least_squares(field::CrossField, cut_graph::Se
     # Build Sparse Matrix
     M = sparse(I_idx, J_idx, V_val, N_total, N_total)
     
+    # Check for zero rows/cols
+    diag_M = diag(M)
+    zero_diags = findall(x -> abs(x) < 1e-12, diag_M)
+    if !isempty(zero_diags)
+        println("WARNING: Matrix M has $(length(zero_diags)) zero diagonal entries!")
+        println("  First 10 zero indices: $(first(zero_diags, 10))")
+        
+        # Add small regularization to zero diagonals to allow solve to proceed (and likely produce garbage, but debuggable)
+        for idx in zero_diags
+            M[idx, idx] += 1e-9
+        end
+    end
+    
+    # Global Regularization to prevent singularity
+    # This helps if there are floating components or ill-conditioning
+    for i in 1:N_total
+        M[i, i] += 1e-9
+    end
+    
     return M, b, sys, rotations
 end
 
@@ -449,7 +476,7 @@ function solve_mixed_integer_parameterization(field::CrossField, cut_graph::Set{
 
     # 2. Initial Relaxed Solve
     if verbose; println("  [1/3] Solving continuous system..."); end
-    M, b, sys, _ = compute_parameterization_least_squares(field, cut_graph; verbose=false)
+    M, b, sys, rotations = compute_parameterization_least_squares(field, cut_graph; verbose=false)
     x = M \ b
     
     # 3. Greedy Rounding Loop
@@ -507,7 +534,7 @@ function solve_mixed_integer_parameterization(field::CrossField, cut_graph::Set{
         # D. Re-solve (Update system with new constraints)
         # Note: We re-assemble M/b. For large meshes, updating M in place is faster, 
         # but re-assembly is safer and easier to implement.
-        M_new, b_new, _, _ = compute_parameterization_least_squares(field, cut_graph; 
+        M_new, b_new, _, rotations = compute_parameterization_least_squares(field, cut_graph; 
                                     fixed_jumps=fixed_jumps, 
                                     fixed_singularities=fixed_sings,
                                     verbose=false)
@@ -532,7 +559,7 @@ function solve_mixed_integer_parameterization(field::CrossField, cut_graph::Set{
         v_phys[i] = x[sys_idx + sys.n_continuous_vars]
     end
     
-    return u_phys, v_phys
+    return u_phys, v_phys, x, sys, rotations
 end
 
 end

@@ -44,6 +44,8 @@ export read_mesh,
        plot_results,
        plot_smooth_global_field,
        plot_quad_mesh,
-       plot_frame
+       plot_frame,
+       QuadMesh, 
+       extract_quad_mesh
 
 end # module

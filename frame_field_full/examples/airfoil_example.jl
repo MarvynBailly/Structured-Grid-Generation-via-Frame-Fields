@@ -162,77 +162,6 @@ end
 
 
 # --- 3. Run Pipeline ---
-# function main()
-#     upper_constraint = false
-#     mesh_file = "airfoil_test.su2"
-#     save_path = "output/airfoil_upper$(upper_constraint)_cross_field.png"
-#     @info("Generating mesh...")
-#     generate_airfoil_mesh(mesh_file; n_angular=50, n_radial=10)
-
-    
-#     @info("Reading mesh...")
-#     verts, faces = read_mesh(mesh_file)
-#     topo = build_topology(verts, faces)
-    
-#     @info("Setting constraints...")
-#     constraints = setup_airfoil_constraints(topo, constrain_outer=upper_constraint)
-    
-#     @info("Initializing field...")
-#     field = initialize_field(topo, constraints)
-    
-#     @info("Solving...")
-#     solve_greedy!(field; verbose=false)
-    
-#     @info("Optimizing Singularities...")
-#     optimize_singularities!(field; verbose=false)
-    
-#     # Check Topology
-#     sings = compute_singularities(field)
-#     if isempty(sings)
-#         @info("Total Singularity Index: 0.0 (Perfect!)")
-#     else
-#         total_idx = sum(s[2] for s in sings)
-#         @info("Total Singularity Index: $total_idx (Expected: 0.0)")
-#     end
-
-#     # cut the mesh M into a disk topology
-#     cuts = compute_cut_graph(topo, sings)
-
-
-#     # 1. Setup output directory
-#     frame_dir = "debug_frames"
-#     rm(frame_dir, recursive=true, force=true) # Clear old frames
-#     mkpath(frame_dir)
-
-#     # 2. Define the Callback
-#     #    Captures 'field' and 'cuts' from your local scope
-#     plot_step = 20 # Adjust this: smaller = smoother GIF, slower generation
-
-#     # debug_callback = (current_rotations, iter) -> begin
-#     #     if iter % plot_step == 0 || iter == 1
-#     #         # Format filename: frame_0001.png, frame_0002.png...
-#     #         fname = joinpath(frame_dir, @sprintf("frame_%05d.png", iter))
-            
-#     #         # Call your plotting function
-#     #         # Note: We pass 'current_rotations' which is partially filled (-1 for unvisited)
-#     #         plot_smooth_global_field(field, current_rotations, fname; 
-#     #                                 cut_edges=cuts, 
-#     #                                 verbose=false)
-                                    
-#     #         print(".") # Progress indicator
-#     #     end
-#     # end
-#     debug_callback = nothing
-
-#     # 2. Propagate Orientations (Step 1 of Param)
-#     rotations = propagate_orientations(field, cuts; callback=debug_callback)
-
-#     # plot_global_rotations(field, rotations; save_path = joinpath("output", "global_rotations.png"), final_cuts=cuts, verbose=true, two_d = true)
-
-#     # @info("Visualizing...")
-#     # visualize_field(field, title="Airfoil Flow (χ=0)", final_cuts=cuts, save_path=save_path, two_d=true)
-# end
-
 function main()
     upper_constraint = false
     mesh_file = "airfoil_test.su2"
@@ -240,7 +169,7 @@ function main()
     
     # 1. Mesh Generation & Topology
     @info("Generating mesh...")
-    generate_airfoil_mesh(mesh_file; n_angular=50, n_radial=10)
+    generate_airfoil_mesh(mesh_file; n_angular=30, n_radial=10)
     
     @info("Reading mesh...")
     verts, faces = read_mesh(mesh_file)
@@ -259,17 +188,27 @@ function main()
     cuts = compute_cut_graph(topo, sings)
 
     # 4. Global Parametrization (MIQ Section 5 - Solver)
-    @info("Computing Parametrization System...")
+    # @info("Computing Parametrization System...")
     
-    u_phys, v_phys = solve_mixed_integer_parameterization(field, cuts)
+    # u_phys, v_phys, x, sys, rotations = solve_mixed_integer_parameterization(field, cuts)
     
-    # 5. Visualization
-    @info("Visualizing Parametrization...")
+    # 5. Extraction
+    # @info("Extracting Quad Mesh...")
+    # quad_mesh = extract_quad_mesh(topo, u_phys, v_phys, x, sys, rotations)
     
-    # Pass empty quads list [] because we haven't extracted them yet.
-    # We are just visualizing the UV scalar fields on the triangle mesh.
-    plot_quad_mesh(topo, u_phys, v_phys, Tuple{Int,Int,Int,Int}[], 
-                  "output/airfoil_param_continuous.png"; verbose=true)
+    # 6. Visualization
+    @info("Visualizing Results...")
+    
+    # Visualize Frame Field
+    visualize_field(field; title="Airfoil Field", final_cuts=cuts, save_path=save_path, two_d=true)
+
+    # Visualize Continuous Parameterization
+    # plot_quad_mesh(topo, u_phys, v_phys, Tuple{Int,Int,Int,Int}[], 
+    #               "output/airfoil_param_continuous.png"; verbose=true)
+                  
+    # Visualize Extracted Quad Mesh
+    # plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
+    #                     "output/airfoil_extracted_quads.png"; topo=topo, verbose=true)
                   
     @info("Pipeline Complete!")
 end

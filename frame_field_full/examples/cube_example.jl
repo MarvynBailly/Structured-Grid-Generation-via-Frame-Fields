@@ -6,6 +6,7 @@ using FrameFieldFull.Analysis
 using FrameFieldFull.MeshIO
 using FrameFieldFull.Cutting
 using FrameFieldFull.Plotting
+using FrameFieldFull.Parameterization
 using LinearAlgebra
 
 include("visualize_cross_field.jl")
@@ -120,26 +121,30 @@ function main()
     @info("Optimizing Singularities...")
     optimize_singularities!(field; verbose=false)
     
-    # Check Topology
-    sings = compute_singularities(field)
-    if isempty(sings)
-        @info("Total Singularity Index: 0.0")
-    else
-        total_idx = sum(s[2] for s in sings)
-        @info("Total Singularity Index: $total_idx (Expected: 2.0)")
-    end
-
+    
     # cut the mesh M into a disk topology
+    sings = compute_singularities(field)
     cuts = compute_cut_graph(topo, sings)
 
-    rotations = propagate_orientations(field, cuts; callback=nothing)
 
-    plot_global_rotations(field, rotations; save_path = joinpath("output", "global_rotations.png"), final_cuts=cuts, verbose=true, two_d = true)
+        # 4. Global Parametrization (MIQ Section 5 - Solver)
+    @info("Computing Parametrization System...")
+    
+    u_phys, v_phys, x, sys, rotations = solve_mixed_integer_parameterization(field, cuts)
+    
+    # 5. Extraction
+    @info("Extracting Quad Mesh...")
+    quad_mesh = extract_quad_mesh(topo, u_phys, v_phys, x, sys, rotations)
 
 
 
-    @info("Visualizing...")
-    # visualize_field(field, title="Cube Flow (Chi=2)", final_cuts=cuts, save_path=save_file_path)
+    # 6. Visualization
+    @info("Visualizing Results...")
+
+    plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
+                            "output/cube_final_quads_3d.png"; 
+                            topo=topo, verbose=true)
+
 end
 
 main()
