@@ -188,13 +188,13 @@ function main()
     cuts = compute_cut_graph(topo, sings)
 
     # 4. Global Parametrization (MIQ Section 5 - Solver)
-    # @info("Computing Parametrization System...")
+    @info("Computing Parametrization System...")
     
-    # u_phys, v_phys, x, sys, rotations = solve_mixed_integer_parameterization(field, cuts)
+    u_phys, v_phys, x, sys, rotations = solve_mixed_integer_parameterization(field, cuts)
     
     # 5. Extraction
-    # @info("Extracting Quad Mesh...")
-    # quad_mesh = extract_quad_mesh(topo, u_phys, v_phys, x, sys, rotations)
+    @info("Extracting Quad Mesh...")
+    quad_mesh = extract_quad_mesh(topo, u_phys, v_phys, x, sys, rotations)
     
     # 6. Visualization
     @info("Visualizing Results...")
@@ -207,8 +207,8 @@ function main()
     #               "output/airfoil_param_continuous.png"; verbose=true)
                   
     # Visualize Extracted Quad Mesh
-    # plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
-    #                     "output/airfoil_extracted_quads.png"; topo=topo, verbose=true)
+    plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
+                        "output/airfoil_extracted_quads.png"; topo=topo, verbose=true)
                   
     @info("Pipeline Complete!")
 end
