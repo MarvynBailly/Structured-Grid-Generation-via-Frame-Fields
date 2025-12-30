@@ -8,7 +8,7 @@ using GeometryBasics
 using Printf
 using LinearAlgebra
 
-export plot_frame, plot_results, plot_smooth_global_field, plot_quad_mesh, plot_global_rotations
+export plot_frame, plot_results, plot_smooth_global_field, plot_quad_mesh, plot_global_rotations, plot_extracted_quads
 
 
 # --- Helper: Convert Local Theta to Global Vector ---
@@ -582,6 +582,68 @@ function plot_quad_mesh(topo::MeshTopology, u_coords::Vector{Float64}, v_coords:
                     minimum(quad_qualities), sum(quad_qualities)/length(quad_qualities), maximum(quad_qualities))
         end
     end
+end
+
+
+"""
+    plot_extracted_quads(vertices, quads, filename; topo=nothing)
+
+Visualizes the final extracted quad mesh in 3D.
+- vertices: Vector of Point3D (the nodes of the quad mesh)
+- quads: Vector of 4-tuples (indices into vertices)
+- topo: Optional background triangle mesh for reference
+"""
+function plot_extracted_quads(vertices::Vector{Point3D}, quads::Vector{Tuple{Int,Int,Int,Int}}, filename::String; 
+                              topo::Union{MeshTopology, Nothing}=nothing, verbose=false)
+    if verbose; println("\n--- Plotting Extracted Quad Mesh ---"); end
+    
+    fig = Figure(size=(1000, 800))
+    ax = Axis3(fig[1, 1], aspect=:data, title="Extracted Quad Mesh")
+    
+    # 1. Plot Background (Original Triangle Mesh) - Ghosted
+    if !isnothing(topo)
+        t_pts = [Point3f(v.x, v.y, v.z) for v in topo.vertices]
+        t_faces = [GLMakie.TriangleFace(f[1], f[2], f[3]) for f in topo.faces]
+        t_mesh = GeometryBasics.normal_mesh(t_pts, t_faces)
+        # Very transparent gray
+        mesh!(ax, t_mesh, color=(:gray, 0.1), transparency=true, shading=NoShading)
+    end
+    
+    # 2. Prepare Quad Mesh Geometry
+    # Convert vertices to Float32 points for Makie
+    q_pts = [Point3f(v.x, v.y, v.z) for v in vertices]
+    
+    # Makie requires triangles for the 'mesh' command.
+    # We split each quad (v1,v2,v3,v4) into two triangles: (v1,v2,v3) and (v1,v3,v4)
+    tri_faces = GLMakie.TriangleFace{Int}[]
+    wire_segments = Point3f[]
+    
+    for (v1, v2, v3, v4) in quads
+        # Surface Triangles
+        push!(tri_faces, GLMakie.TriangleFace(v1, v2, v3))
+        push!(tri_faces, GLMakie.TriangleFace(v1, v3, v4))
+        
+        # Wireframe Edges
+        p1, p2, p3, p4 = q_pts[v1], q_pts[v2], q_pts[v3], q_pts[v4]
+        push!(wire_segments, p1, p2)
+        push!(wire_segments, p2, p3)
+        push!(wire_segments, p3, p4)
+        push!(wire_segments, p4, p1)
+    end
+    
+    # 3. Plot Surface (Cyan)
+    if !isempty(tri_faces)
+        q_mesh = GeometryBasics.normal_mesh(q_pts, tri_faces)
+        mesh!(ax, q_mesh, color=(:cyan, 0.8), shading=NoShading)
+    end
+    
+    # 4. Plot Wireframe (Black)
+    if !isempty(wire_segments)
+        linesegments!(ax, wire_segments, color=:black, linewidth=1.5)
+    end
+    
+    save(filename, fig)
+    if verbose; println("Saved to $filename"); end
 end
 
 end

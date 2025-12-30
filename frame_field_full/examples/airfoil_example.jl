@@ -260,16 +260,18 @@ function main()
 
     # 4. Global Parametrization (MIQ Section 5 - Solver)
     @info("Computing Parametrization System...")
+    u_param, v_param = solve_mixed_integer_parameterization(field, cuts)
     
-    u_phys, v_phys = solve_mixed_integer_parameterization(field, cuts)
-    
-    # 5. Visualization
+    # 5. Extraction
+    @info("Extracting Quad Mesh...")
+    quad_mesh = extract_quad_mesh(topo, u_param, v_param)
+
+    # 6. Visualization
     @info("Visualizing Parametrization...")
     
-    # Pass empty quads list [] because we haven't extracted them yet.
-    # We are just visualizing the UV scalar fields on the triangle mesh.
-    plot_quad_mesh(topo, u_phys, v_phys, Tuple{Int,Int,Int,Int}[], 
-                  "output/airfoil_param_continuous.png"; verbose=true)
+    plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
+                            "output/airfoil_final_quads_3d.png"; 
+                            topo=topo, verbose=true)
                   
     @info("Pipeline Complete!")
 end
