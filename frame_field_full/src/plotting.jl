@@ -8,7 +8,7 @@ using GeometryBasics
 using Printf
 using LinearAlgebra
 
-export plot_frame, plot_results, plot_smooth_global_field, plot_quad_mesh, plot_global_rotations, plot_extracted_quads
+export plot_frame, plot_results, plot_smooth_global_field, plot_quad_mesh, plot_global_rotations, plot_extracted_quads, plot_pipeline_overview
 
 
 # --- Helper: Convert Local Theta to Global Vector ---
@@ -91,7 +91,7 @@ function plot_frame(field, filename, title_text; cut_edges=nothing, show_singula
     return nothing
 end
 
-function plot_results(field, filename; verbose=false, cut_edges=nothing, show_period_jumps=false)
+function plot_results(field, filename, sings; verbose=false, cut_edges=nothing, show_period_jumps=false)
     fig = Figure(size=(1000, 800))
     ax = Axis(fig[1, 1], aspect=DataAspect(), title="MIQ Solution (Constrained Faces & Singularities)")
     
@@ -153,11 +153,33 @@ function plot_results(field, filename; verbose=false, cut_edges=nothing, show_pe
         end
     end
     
-    for (face_idx, _) in field.constrained_faces
+# Store arrow data
+    c_xs, c_ys, c_us, c_vs = Float64[], Float64[], Float64[], Float64[]
+    scale = 0.05 # Adjust this scale based on your mesh size
+
+    # Change `_` to `angle` to use the constraint value
+    for (face_idx, angle) in field.constrained_faces
         tri = field.topology.faces[face_idx]
         pts = [field.topology.vertices[i] for i in tri]; push!(pts, pts[1])
+        
+        # 1. Highlight the face (Existing)
         lines!(ax, [p.x for p in pts], [p.y for p in pts], color=:orange, linewidth=2)
         poly!(ax, [Point2f(p.x, p.y) for p in pts[1:3]], color=(:orange, 0.2))
+        
+        # 2. Calculate direction arrow
+        c = get_face_center(field.topology, face_idx)
+        # Use existing helper to convert local angle to global vector
+        v = get_global_vector(field.topology, face_idx, angle)
+        
+        push!(c_xs, c[1])
+        push!(c_ys, c[2])
+        push!(c_us, v[1] * scale)
+        push!(c_vs, v[2] * scale)
+    end
+
+    # 3. Plot the direction arrows
+    if !isempty(c_xs)
+        arrows2d!(ax, c_xs, c_ys, c_us, c_vs, color=:cyan, label="Constraint Dir")
     end
     
     xs_main, ys_main, us_main, vs_main = Float64[], Float64[], Float64[], Float64[]
@@ -184,10 +206,10 @@ function plot_results(field, filename; verbose=false, cut_edges=nothing, show_pe
             push!(xs_sec, c); push!(ys_sec, cy); push!(us_sec, cos(a)*0.03); push!(vs_sec, sin(a)*0.03)
         end
     end
-    arrows!(ax, xs_sec, ys_sec, us_sec, vs_sec, color=:blue)
-    arrows!(ax, xs_main, ys_main, us_main, vs_main, color=:red)
+    arrows2d!(ax, xs_sec, ys_sec, us_sec, vs_sec, color=:blue)
+    arrows2d!(ax, xs_main, ys_main, us_main, vs_main, color=:red)
     
-    sings = compute_singularities(field; verbose=verbose)
+    # sings = compute_singularities(field; verbose=verbose)
     pos = Point2f[]; neg = Point2f[]
     for (v, I) in sings
         p = field.topology.vertices[v]
@@ -645,5 +667,121 @@ function plot_extracted_quads(vertices::Vector{Point3D}, quads::Vector{Tuple{Int
     save(filename, fig)
     if verbose; println("Saved to $filename"); end
 end
+
+
+"""
+    plot_pipeline_overview(field, quad_mesh, filename)
+
+Creates a 3-panel visualization:
+1. Left: Initial Triangle Mesh
+2. Center: Cross Field (with Constraints highlighted)
+3. Right: Extracted Quad Mesh
+"""
+function plot_pipeline_overview(field::CrossField, quad_mesh, filename::String; verbose=false)
+    if verbose; println("Generating pipeline overview: $filename"); end
+
+    topo = field.topology
+    fig = Figure(size=(1800, 600)) # Wide figure for 3 panels
+
+    # --- Panel 1: Initial Triangulation ---
+    ax1 = Axis(fig[1, 1], aspect=DataAspect(), title="1. Initial Triangulation")
+    
+    # Plot wireframe of input mesh
+    for tri in topo.faces
+        pts = [topo.vertices[i] for i in tri]; push!(pts, pts[1])
+        lines!(ax1, [p.x for p in pts], [p.y for p in pts], color=(:gray, 0.4), linewidth=0.5)
+    end
+    # Optional: Plot vertices
+    # scatter!(ax1, [v.x for v in topo.vertices], [v.y for v in topo.vertices], color=:black, markersize=2)
+
+
+    # --- Panel 2: Cross Field & Constraints ---
+    ax2 = Axis(fig[1, 2], aspect=DataAspect(), title="2. Cross Field & Constraints")
+    
+    # Background mesh (faint)
+    for tri in topo.faces
+        pts = [topo.vertices[i] for i in tri]; push!(pts, pts[1])
+        lines!(ax2, [p.x for p in pts], [p.y for p in pts], color=(:gray, 0.1), linewidth=0.3)
+    end
+
+    # 2A. Plot Field Vectors (Sampled)
+    n_faces = length(topo.faces)
+    sample_rate = n_faces > 1000 ? (n_faces ÷ 500) : 1
+    
+    xs, ys, us, vs = Float64[], Float64[], Float64[], Float64[]
+    scale = 0.03 # Adjust based on mesh scale
+
+    for i in 1:n_faces
+        if i % sample_rate != 0; continue; end
+        
+        # Get vector for current theta
+        v_global = get_global_vector(topo, i, field.theta[i])
+        c = get_face_center(topo, i)
+        
+        push!(xs, c[1]); push!(ys, c[2])
+        push!(us, v_global[1]*scale); push!(vs, v_global[2]*scale)
+        
+        # Plot orthogonal vector too (cross)
+        v_ortho = get_global_vector(topo, i, field.theta[i] + π/2)
+        push!(xs, c[1]); push!(ys, c[2])
+        push!(us, v_ortho[1]*scale); push!(vs, v_ortho[2]*scale)
+    end
+    arrows2d!(ax2, xs, ys, us, vs, color=(:blue, 0.6))
+
+    # 2B. Highlight Constrained Faces & Directions
+    c_xs, c_ys, c_us, c_vs = Float64[], Float64[], Float64[], Float64[]
+    
+    for (f_idx, angle) in field.constrained_faces
+        # Highlight Face (Orange Polygon)
+        tri = topo.faces[f_idx]
+        pts = [topo.vertices[i] for i in tri]
+        poly!(ax2, [Point2f(p.x, p.y) for p in pts], color=(:orange, 0.4))
+        
+        # Store Constraint Direction Arrow
+        v_global = get_global_vector(topo, f_idx, angle)
+        c = get_face_center(topo, f_idx)
+        
+        push!(c_xs, c[1]); push!(c_ys, c[2])
+        push!(c_us, v_global[1]*scale*1.5); push!(c_vs, v_global[2]*scale*1.5) # Slightly larger
+    end
+    
+    # Plot Constraint Arrows
+    if !isempty(c_xs)
+        arrows2d!(ax2, c_xs, c_ys, c_us, c_vs, color=:red, label="Constraint")
+    end
+
+
+    # --- Panel 3: Resulting Quads ---
+    ax3 = Axis(fig[1, 3], aspect=DataAspect(), title="3. Extracted Quads")
+    
+    # Plot extracted quads
+    # Note: quad_mesh.vertices are Point3D
+    q_edges_x = Float64[]
+    q_edges_y = Float64[]
+    
+    for (v1, v2, v3, v4) in quad_mesh.quads
+        pts = [quad_mesh.vertices[v1], quad_mesh.vertices[v2], 
+               quad_mesh.vertices[v3], quad_mesh.vertices[v4], quad_mesh.vertices[v1]]
+        
+        for p in pts
+            push!(q_edges_x, p.x)
+            push!(q_edges_y, p.y)
+        end
+        push!(q_edges_x, NaN) # Separator
+        push!(q_edges_y, NaN)
+    end
+    
+    lines!(ax3, q_edges_x, q_edges_y, color=:black, linewidth=1.5)
+    
+    # Optional: Plot vertices
+    # qv_x = [v.x for v in quad_mesh.vertices]
+    # qv_y = [v.y for v in quad_mesh.vertices]
+    # scatter!(ax3, qv_x, qv_y, color=:black, markersize=3)
+
+    # Save
+    save(filename, fig)
+    if verbose; println("Saved pipeline visualization to $filename"); end
+end
+
 
 end

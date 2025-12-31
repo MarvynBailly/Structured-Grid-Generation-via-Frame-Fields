@@ -234,7 +234,7 @@ end
 # end
 
 function main()
-    upper_constraint = false
+    upper_constraint = true
     mesh_file = "airfoil_test.su2"
     save_path = "output/airfoil_upper$(upper_constraint)_cross_field.png"
     

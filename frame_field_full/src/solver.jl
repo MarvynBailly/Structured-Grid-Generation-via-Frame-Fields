@@ -15,7 +15,9 @@ function initialize_field(topo, constraints)
     kappa = compute_transport_angles(topo)
     n = length(topo.faces); theta = zeros(n); fixed = Set{Tuple{Int,Int}}()
     p_jumps = Dict{Tuple{Int,Int}, Int}()
-    for (f, a) in constraints; theta[f] = a; end
+    for (f, a) in constraints; 
+        theta[f] = a; 
+    end
     return CrossField(topo, theta, p_jumps, kappa, constraints, fixed)
 end
 

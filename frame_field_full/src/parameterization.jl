@@ -247,6 +247,7 @@ function compute_parameterization_least_squares(field::CrossField, cut_graph::Se
         cnt += 1
     end
     h = (cnt > 0) ? h/cnt : 1.0
+    h = h * 2 # TODO: Adjust scaling factor as needed
 
     for f in 1:length(topo.faces)
         tri = topo.faces[f]
