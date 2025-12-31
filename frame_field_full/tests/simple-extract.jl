@@ -521,23 +521,6 @@ function generate_curved_mesh_with_constraints(filename; r_in=1.0, r_out=2.5, n_
                 
                 constraints[face_idx] = mod2pi(target_global - ref_ang + π) - π
             end
-
-            push!(faces, (p1, p3, p4))
-            face_idx += 1
-            
-            # CONSTRAINT C: Left Edge / Inlet (i=1 implies theta=0)
-            if i == 1
-                target_global = 0.0 # Pointing Right (+X)
-                
-                v1 = vertices[p1]
-                v2 = vertices[p3]
-                
-                # Calculate angle of the Reference Edge (p1 -> p3)
-                ref_ang = atan(v2[2] - v1[2], v2[1] - v1[1])
-                
-                # Calculate relative constraint
-                constraints[face_idx] = mod2pi(target_global - ref_ang + π) - π
-            end
         end
     end
     
@@ -575,6 +558,8 @@ function main()
     # 1. Load
     verts, faces = read_mesh(mesh_file)
     topo = build_topology(verts, faces)
+
+
     
     # 2. Field Solve
     # Constrain ALL faces to ensure perfect alignment
@@ -584,18 +569,22 @@ function main()
     # constraints = setup_analytic_constraints(topo)
     field = initialize_field(topo, constraints)
     
-    # Just one solve iteration needed since everything is constrained
+    
+    
     solve_greedy!(field; verbose=true)
     optimize_singularities!(field; verbose=true)
-
+    
+    
+    
+    
     # 3. Parametrization 
     # Since the field is smooth (0 index), cuts should be empty
     sings = compute_singularities(field)
     cuts = compute_cut_graph(topo, sings)
 
-    plot_results(field, "output/debug_frame_field.png", sings; cut_edges=cuts, show_period_jumps=true)
+    # plot_results(field, "output/debug_frame_field.png", sings; cut_edges=cuts, show_period_jumps=true)
     # println("\n--- Solving Parameterization ---")
-    # u_param, v_param = solve_mixed_integer_parameterization(field, cuts)
+    u_param, v_param = solve_mixed_integer_parameterization(field, cuts)
     
     # # # DEBUG: Print UV range
     # u_min, u_max = minimum(u_param), maximum(u_param)
@@ -606,9 +595,13 @@ function main()
     # # 4. Visualization (UV Space)
     # plot_quad_mesh(topo, u_param, v_param, Tuple{Int,Int,Int,Int}[], "output/debug_uv_space.png"; verbose=true)
     
-    # # 5. Extraction
-    # quad_mesh = extract_quad_mesh(topo, u_param, v_param)
+    # 5. Extraction
+    quad_mesh = extract_quad_mesh(topo, u_param, v_param)
     
+
+    visualize("test.png"; topo=topo, field=field, show_constraints=true, verbose=true, show_singularities=true, quad_mesh=quad_mesh, show_period_jumps=true, cut_edges=cuts) 
+
+
     # # 6. Visualization (Final)
     # # plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, "output/debug_rect_quads.png"; topo=topo, verbose=true)
     # plot_pipeline_overview(field, quad_mesh, "output/pipeline_debug.png"; verbose=true)
