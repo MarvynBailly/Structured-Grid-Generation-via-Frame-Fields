@@ -1,0 +1,723 @@
+                                                                         Mixed-Integer Quadrangulation
+                                                              David Bommes                                  Henrik Zimmer                    Leif Kobbelt
+
+                                                                                               RWTH Aachen University
+
+
+
+
+                           (a)                                                          (b)                                              (c)                                         (d)
+
+Figure 1: Quadrangulation example: (a) A sparse set of conservatively estimated orientation and/or alignment constraints is selected on
+the input mesh by some simple heuristic or by the user. (b) In a global optimization procedure a cross field is generated on the mesh which
+interpolates the given constraints and is as smooth as possible elsewhere. The optimization includes the automatic generation and placement
+of singularities. (c) A globally smooth parametrization is computed on the surface whose iso-parameter lines follow the cross field directions
+and singularities lie at integer locations. (d) Finally, a consistent, feature aligned quadmesh can be extracted.
+
+
+Abstract                                                                                                                 1     Introduction
+We present a novel method for quadrangulating a given triangle                                                           The problem of generating high quality quad meshes from unstruc-
+mesh. After constructing an as smooth as possible symmetric cross                                                        tured triangle meshes has received a lot of attention recently. The
+field satisfying a sparse set of directional constraints (to capture the                                                 reason for this interest is that quad meshing converts raw geometric
+geometric structure of the surface), the mesh is cut open in order to                                                    data into a higher representation which effectively supports sophis-
+enable a low distortion unfolding. Then a seamless globally smooth                                                       ticated operations like texturing and shape modification. The diffi-
+parametrization is computed whose iso-parameter lines follow the                                                         culties in quad meshing arise from the fact that the quality criteria
+cross field directions. In contrast to previous methods, sparsely dis-                                                   are diverse and their optimization often requires the consideration
+tributed directional constraints are sufficient to automatically de-                                                     of global dependencies. The most common quality aspects are:
+termine the appropriate number, type and position of singularities
+in the quadrangulation. Both steps of the algorithm (cross field                                                             1. Individual Element Quality: Each quad should be close to
+and parametrization) can be formulated as a mixed-integer problem                                                               a rectangle or square, i.e. the four corner points should be
+which we solve very efficiently by an adaptive greedy solver. We                                                                coplanar, opposite edges should have equal length and the
+show several complex examples where high quality quad meshes                                                                    four interior angles should be 90 degrees.
+are generated in a fully automatic manner.                                                                                   2. Orientation: Away from flat or umbilic points on the surface,
+                                                                                                                                mesh edges should be orthogonal to the principal curvature
+CR Categories: I.3.5 [Computational Geometry and Object Mod-                                                                    directions such that the dihedral angle across edges captures
+eling]: Hierarchy and geometric transformations                                                                                 these curvatures in a natural way.
+
+Keywords: remeshing, quadrangulation, parametrization, direc-                                                                3. Alignment: Sharp features of the surface should be explicitly
+tion field, singularities, mixed-integer                                                                                        represented by a sequence of mesh edges in order to minimize
+                                                                                                                                the Hausdorff-distance between triangulation and quadrangu-
+                                                                                                                                lation and to prevent normal noise.
+ACM Reference Format
+Bommes, D., Zimmer, H., Kobbelt, L. 2009. Mixed-Integer Quadrangulation. ACM Trans. Graph. 28, 3,                            4. Global Structure: Singularities, i.e. vertices with valence
+Article 77 (August 2009), 10 pages. DOI = 10.1145/1531326.1531383
+http://doi.acm.org/10.1145/1531326.1531383.
+                                                                                                                                6= 4, are necessary to compensate for the Gaussian curva-
+                                                                                                                                 ture. Their number and position must be chosen carefully to
+Copyright Notice
+Permission to make digital or hard copies of part or all of this work for personal or classroom use is granted                   capture the global geometric structure since otherwise the el-
+without fee provided that copies are not made or distributed for profit or direct commercial advantage
+and that copies show this notice on the first page or initial screen of a display along with the full citation.
+                                                                                                                                 ement quality and orientation is heavily affected.
+Copyrights for components of this work owned by others than ACM must be honored. Abstracting with
+credit is permitted. To copy otherwise, to republish, to post on servers, to redistribute to lists, or to use any            5. Semantics: In some applications additional requirements
+component of this work in other works requires prior specific permission and/or a fee. Permissions may be
+requested from Publications Dept., ACM, Inc., 2 Penn Plaza, Suite 701, New York, NY 10121-0701,                                 emerge from the intended usage of the 3D model and cannot
+fax +1 (212) 869-0481, or permissions@acm.org.
+© 2009 ACM 0730-0301/2009/03-ART77 $10.00 DOI 10.1145/1531326.1531383
+                                                                                                                                be derived from the geometry alone. In finite element simula-
+http://doi.acm.org/10.1145/1531326.1531383                                                                                      tion of deformation processes, e.g., the optimal mesh depends
+                                                                                                                    ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+77:2      •      D. Bommes et al.
+
+       on the rest geometry as well as on the external forces and con-                     Cross fields     can be seen as four coupled vector fields. Con-
+       straints.                                                                           sequently, smoothing algorithms must be able to handle the dis-
+                                                                                           cretely switching vector assignments, which can be achieved by a
+A quadrangulation algorithm should optimize the output simulta-                            non-linear angle formulation like in [Hertzmann and Zorin 2000].
+neously with respect to all of these criteria. However, while ele-                         However, such methods often get stuck in local minima and the
+ment quality, orientation and alignment are rather simple, the global                      result strongly depends on the initial solution.
+structure is much more difficult to handle. Consequently, we focus
+on automatically finding good singularity positions which optimize                         Recently Ray et al. proposed a formalism to handle N-symmetry
+the global structure of the quadrangulation. Although the overall                          direction fields [Ray et al. 2008b] in a linear manner, enabling the
+method is designed to run fully automatic, the user can still manu-                        computation of globally smooth solutions. However, all singularity
+ally override some decisions, e.g. by manually shifting a singularity                      positions must be prescribed by the user. In contrast we search for
+wherever it is necessary to take semantical side-conditions into ac-                       singularity positions which enable the smoothest cross field for a set
+count (see criterion 5).                                                                   of sparse directional constraints. Besides the automatic singular-
+                                                                                           ity placement, another contribution of our approach is the smooth
+Many recent methods use smoothed (discrete) principal curvature                            handling of multiple directional constraints, not possible in [Ray
+directions to guide the quad meshing. The problem with these ap-                           et al. 2008b]. Their user-given hard angle constraints already fix
+proaches is that the final singularity positions are effectively deter-                    the smoothness between multiple constraints, and do not exploit
+mined by the local smoothing operator applied to the initial curva-                        that the orientation of cross fields is invariant w.r.t. rotations by
+ture estimates. Especially in flat or umbilic regions where the initial                    multiples of 90 degrees and that there might be rotations leading
+directions have a random orientation, clusters of singularities may                        to a smoother cross field.
+occur. Another problem is oversmoothing which may destroy the                              In the case of highly detailed geometry a smooth cross field nat-
+original orientation information in feature regions.                                       urally requires lots of singularities which can be prevented by the
+                                                                                           smoothing algorithm of Ray et al. [Ray et al. 2008a]. In contrast to
+To overcome these problems we propose to select only the most rel-                         their approach, we interpret the cross field as an infinitely fine quad-
+evant and dominant directions as depicted in Figure 1 (a), which can                       rangulation and compute all necessary singularities. The merging
+be detected, e.g., by conservative thresholding of some anisotropy                         of singularities is later controlled by the parametrization which can
+measure or by manual selection. Starting with these sparsely dis-                          perform singularity cancellations w.r.t. the given target edge length.
+tributed direction constraints we then search for the smoothest in-
+terpolating cross field. The singularities in this interpolating cross
+field are mostly due to the surface metric deviating from a planar                         Structure aware Parametrization techniques           can be divided
+configuration and not caused by incompatible constraints.                                  into two classes, namely high-level methods where the quad orien-
+                                                                                           tation is controlled by a rough patch layout and low-level methods
+In the second phase of our algorithm the smooth cross field is used                        where a desired orientation is given per triangle. Dong et al. used
+as input for a global parametrization method. We cut the mesh open                         the Morse-Smale complex of Laplacian eigenfunctions [Dong et al.
+such that we create a surface patch with a disk-like topology where                        2006] to derive high-level patch layouts. Their method was ex-
+all cross field singularities lie at the boundary. Subsequently, we                        tended in [Huang et al. 2008] to enable the control over singularity
+can compute two piecewise linear scalar fields u and v whose gra-                          positions, size, orientation and feature alignment. However, com-
+dients follow the given cross field. Finally, a consistent quadran-                        puting coarse high-quality results is still involved and requires an
+gulation can be extracted since by construction the parametrization                        experienced user. Tong et al. used high-level user-designed singu-
+is compatible at the cuts and all singularities are mapped to integer                      larity graphs to enrich the space of harmonic one-forms and com-
+positions along the boundary of the parameter domain.                                      pute globally smooth parametrizations [Tong et al. 2006]. Once
+                                                                                           a suitable singularity graph is provided by the user, these har-
+In both steps of the algorithm the task can be formulated in terms of                      monic parametrizations produce nice quadrangulations. By allow-
+a mixed-integer problem. These are linear problems where a subset                          ing affine transition functions and optimizing the charts, [Bommes
+of the variables is continuous (∈ R) and the others are discrete                           et al. 2009] improved the distortion of the parametrization.
+(∈ Z). In Section 2 we therefore present a greedy solver for this
+                                                                                           Ray et. al proposed a fully automatic non-linear parametrization
+class of problem.
+                                                                                           technique which is guided by a low-level vector field and assumes
+                                                                                           a single chart for each triangle [Ray et al. 2006]. Kälberer et al.
+1.1    Related Work                                                                        developed a linear algorithm by mapping a cross field to a single
+                                                                                           vector field on a branched covering [Kälberer et al. 2007]. As in
+                                                                                           our parametrization, a triangle based energy is optimized and the
+A lot of effort has been spent in the last years to compute high qual-
+                                                                                           singularity positions are completely defined by the input cross field.
+ity quadrangulations. Since there are several nice surveys [Alliez
+                                                                                           Their intermediate parametrization, i.e. the integral of the hodge de-
+et al. 2005; Hormann et al. 2007], we will discuss here only the
+                                                                                           composed vector field which is incompatible at the cuts, is exactly
+most related works. Generally, there are two classes of approaches,
+                                                                                           the continuous solution of our mixed-integer formulation. How-
+namely explicit quadrangulations and parametrization based tech-
+                                                                                           ever, ensuring compatibility at the cuts is done in a different way.
+niques. Examples of explicit approaches are [Alliez et al. 2003;
+                                                                                           Instead of rounding the coefficients of the transition functions at
+Marinov and Kobbelt 2004] which trace curves along the princi-
+                                                                                           once, we apply our proposed greedy strategy which improves the
+pal curvature directions or [Lai et al. 2008] which iteratively trans-
+                                                                                           resulting quality. A more detailed comparison will be given later in
+forms a triangular mesh into a quad-dominant mesh. For all such
+                                                                                           Section 6.
+methods it is difficult to obtain coarse meshes consisting of quads
+only. Most structure aligned parametrization techniques are guided
+by vector or cross fields usually arising from estimated principal                         Automatic cone singularities         In the setting of conformal
+curvature directions [Cohen-Steiner and Morvan 2003] or a manual                           parametrizations, cone singularities as introduced by Kharevych et
+design process [Zhang et al. 2006; Fisher et al. 2007]. Especially                         al. [Kharevych et al. 2006] can be placed in a greedy manner at
+cross fields are promising since they can capture singularities of                         the local extrema of discrete conformal scaling factors [Ben-Chen
+fractional index which naturally arise in quadrangulations.                                et al. 2008]. These positions can be further improved by a non-
+ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+                                                                                                          Mixed-Integer Quadrangulation               •     77:3
+
+linear Gauss-Seidel solver [Springborn et al. 2008]. Both methods              The obvious drawback of greedy rounding is that we have to
+are designed to compute conformal parametrizations with a small                solve k (= number of integer variables) + 1 linear systems, which
+number of cone singularities and lower distortion. Unfortunately,              increases the computation time prohibitively. However, as we said
+even when restricting to cross field cone singularities, the resulting         above, small round-off errors only have a small impact on the solu-
+positions are often not sufficient for structure aligned parametriza-          tion which can be exploited to design an efficient adaptive solver.
+tions where singularities are additionally induced by the desired ori-
+entations, e.g. the leftmost red singularity lying on the flat part of         2.1    Adaptive Mixed-Integer Solver
+the fandisk in Figure 1. Furthermore, supporting orientational con-
+straints isn’t straight forward in this formulation.                           The first idea is to use an iterative solver like the Conjugate Gradient
+                                                                               or BiCG (for non-symmetric matrices) which after each rounding
+1.2   Contributions                                                            reuses the previous solution as the initial value. But we can do even
+                                                                               better. We observed that for sparse matrices, typically arising in the
+We propose an adaptive greedy solver for mixed integer problems                case of triangle meshes, it is often sufficient to update a small local
+which increases the computation time compared to a continuous                  set of variables. In this context local means that we have a short
+linear system solver only moderately. This is achieved by iterative            path in the dependency graph of all variables. Therefore, we start
+rounding combined with local Gauss-Seidel updates in order to re-              with a local Gauss-Seidel iteration. That means after variable xi is
+duce the local residui.                                                        rounded we push all variables whose Gauss-Seidel update depends
+                                                                               on xi into a queue. These are exactly the nonzero elements of the
+We formulate the quadrangulation problem as a two-step process,                row Ai . Now in each iteration step we fetch the first element from
+cross field generation and global parametrization, which both re-              the queue, say xk , and recompute the local residuum
+duce to a mixed-integer problem.
+                                                                                                                        n
+                                                                                                                        X
+Our cross field generator is able to take sparsely scattered as well                                      rk = bk −           Akj xj
+as densely distributed orientation constraints into account. By                                                         j=1
+smoothly interpolating between the constraints the system can auto-
+matically place singularities at geometrically meaningful locations.           If |rk | is larger than a prescribed tolerance, e.g. 10−6 , we update
+                                                                               the variable xk → xk − rk /Akk and push all variables which de-
+Our new globally smooth parametrization technique allows us to                 pend on xk onto the queue. The iteration terminates if the queue is
+generate seamless quad meshes while satisfying various constraints             empty, i.e. all local residui are within the prescribed tolerance, or a
+like orientation, alignment, and integer singularity locations. An             maximum number of iterations is reached.
+optional anisotropic stretch metric allows us to trade squareness of
+the quads for improved feature alignment.
+                                                                               Algorithm 1 Local Gauss-Seidel
+                                                                                1: xi = round(xi )
+2     A Greedy Mixed-Integer Solver                                             2: push nonzero(Ai ) into queue
+                                                                                3: iter = 0
+The minimization of a quadratic energy E(x1 , . . . , xn ) is called            4: while ( (not queue empty) and (iter < maxiter) ) do
+an integer problem if x ∈ Zn . In this paper we encounter more                  5:    iter = iter + 1
+general problems where some of the unknown variables x1 . . . xk                      xk = pop( queue
+are integers and the others xk+1 . . . xn are real numbers. Integer
+                                                                                6:                 P )
+                                                                                7:    rk = bk − n     j=1 Akj xj
+and mixed-integer problems are usually very hard to solve exactly,              8:    if (|rk | > tolerance) then
+see [Floudas 1995; Gorry et al. 1970] for more details. Hence, a                9:        xk = xk − rk /Akk
+common way to find an approximate solution is to first compute the             10:        push nonzero(Ak ) into queue
+continuous minimizer, which simply requires the solution of the lin-           11:    end if
+ear system {∂E/∂xi = 0 | i = 1 . . . n}. Then the first k variables            12: end while
+of the solution vector are rounded to the nearest integer and a new
+minimizer is computed by assuming these rounded values x1 . . . xk
+to be constant.                                                                If the local Gauss-Seidel solver does not converge (iter ≥
+                                                                               maxiter), we first switch to a more global Conjugate Gradient
+While this direct rounding is a common practice, we observed that,             solver and finally, if it is necessary, to a sparse Cholesky solver
+depending on the number of integer variables and on their mutual               [Chen et al. 2006]. Such time consuming Sparse-Cholesky com-
+dependencies, the obtained solution can deviate significantly from             putations are only necessary when a variable with large impact is
+the true solution. Hence, we propose an alternative approach which             rounded. Our experiments showed that this adaptive solver is more
+we call greedy rounding. The idea is to round the integer variables            efficient than restricting to pure iterative solvers. More detailed
+one at a time, followed by an immediate update of the continuous               statistics about the solver are given in Section 6.
+part of the solution.
+                                                                               In the future we plan to publish our implementation of the presented
+Let x0 be the continuous solution to the linear system and let xi ,            solver which can be applied to arbitrary quadratic mixed-integer
+i ≤ k be the variable which causes the smallest absolute error if we           problems. For maximum flexibility, we added the handling of lin-
+round it to the nearest integer. Then we can set xi to this integer            ear constraints, by internally eliminating a variable for each inde-
+value and update the linear system by assuming xi as constant. We              pendent constraint.
+solve again for the remaining variables x1 and continue to eliminate
+in each step that variable which causes the least round-off error until
+all variables x1 . . . xk have an integer value.                               3     Salient Curvature Directions
+The motivation for this approach is based on the assumption that               In the vicinity of flat or umbilic points, the principal curvature di-
+small round-off errors will only have little impact on the final solu-         rections are ill defined. Consequently, using the principal curvature
+tion and that by recomputing the free variables after every rounding           directions as a dense guiding field for quadrangulation leads to sub-
+step we will compensate these errors.                                          optimal results. Typical artifacts are noisy directions with badly
+                                                                          ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+77:4      •      D. Bommes et al.
+
+                                                                                           4     Smooth cross fields
+
+                d2          d1                                                             In this section we will use the elegant formalism for N-Symmetry
+                                                                                           direction fields [Ray et al. 2008b] where a cross field (N = 4)
+                                                                                          on a triangle mesh M = (V, E, F ) is defined by an angle-field
+                                                                                           θ : F 7→ R assigning a real number to each face and a period-jump
+                 d3              d4                                                        field p : E 7→ Z assigning an integer to each edge. The main idea
+                                                                                           is to use the angles θ to determine a single unit length vector-field
+                        e                                                                  which then extends to a symmetric cross field by applying three ro-
+                      (a)                                   (b)                            tations of π2 as shown in Figure 2 (a). Because a cross consists of
+                                                                                           four vectors between neighboring triangles it is necessary to iden-
+Figure 2: (a) The four cross field directions in a triangle are                            tify which vector of the first cross is associated with which vector
+parametrized by the angle θ w.r.t. a local reference edge e. (b)                           of the second cross. All these topological issues are handled by the
+Depicts a smooth cross field in the vicinity of a cube corner, where                       period-jumps, as illustrated in Figure 2 (b) for a smooth cross field
+the red arrows reflect the corresponding period jumps.                                     near the corner of a cube. In this section we will summarize only
+                                                                                           the discrete results about cross fields that we need in this paper. For
+                                                                                           more details see [Ray et al. 2008b].
+
+placed singularities or even clusters of unnecessary singularities.                        4.1    Measuring cross field smoothness
+Generally, these artifacts cannot be removed by cross field smooth-
+ing algorithms, since the configurations often form local minima.                          After fixing the topology, measuring the smoothness of a cross field
+Therefore, in contrast to other methods, we aim at finding the                             reduces to measuring the smoothness of one of the four rotation
+smoothest cross field, interpolating only sparse directional con-                          symmetric vector-fields.
+straints that can be found in a reliable manner.
+                                                                                           The smoothness of a unit vector-field can be measured as the inte-
+The directions we want to identify are in the spirit of feature lines,                     grated squared curvature of the direction field. Following [Ray et al.
+as computed in [Hildebrandt et al. 2005]. However in our case a                            2008b], on a discrete triangle mesh it turns out to be simply the sum
+simple heuristic which robustly identifies parabolic regions is suf-                       of all squared angle differences between neighboring triangles:
+ficient. Since parabolic regions are equipped with a well-defined
+orientation they are the best candidates to guide a quadrangula-                                                             X
+tion. Parabolic regions can be identified by measuring the relative                                            Esmooth =             (θi − θj )2
+anisotropy of the principal curvatures                                                                                      eij ∈E
+
+
+
+                            ||κmax | − |κmin ||                                            where θi is the angle of triangle i and neighboring angles are rep-
+                      τ =                       ∈ [0, 1]                                   resented in a common coordinate frame, which is always possible
+                                 |κmax |
+                                                                                           by flattening both triangles along their common edge. However,
+                                                                                           for a surface with non-zero Gaussian curvature it is not possible to
+which is defined to be zero, if κmax is zero.                                              find a global coordinate frame. Therefore, a local coordinate frame
+                                                                                           is used for each triangle, where the x axis is identical to the first
+Computing meaningful curvatures on discrete triangle meshes is                             edge e of the triangle (Figure 2(a)). Thus, by incorporating the
+involved. A common technique is evaluating the shape operator                              coordinate transformations between neighbors we can express the
+[Cohen-Steiner and Morvan 2003] of a geodesic disk near a point                            smoothness energy of a cross field:
+p. But depending on the radius r we will get different estimates.
+To achieve a more stable result we compute for each point a set of                                                    X               π
+                                                                                                      Esmooth =            (θi + κij + pij −θj )2              (1)
+shape operators Sr with different geodesic radii r ∈ [r0 , r1 ] and
+                                                                                                                     eij ∈E |      {z 2 }
+select the most promising one with a simple heuristic. A shape                                                               θi w.r.t. frame j
+operator Sr is said to be valid if all shape operators in the interval
+[r − w, r + w] have a relative anisotropy larger than a prescribed                         where κij ∈ (−π, π] is the angle between both local frames and
+threshold τmin and a mean curvature larger than K to exclude                               pij is the integer valued period jump across edge eij . The cross
+almost flat regions. For all points which provide a valid shape                            field index of a vertex can be computed as
+operator, we add a directional constraint. If there are multiple
+valid candidates for a single point we choose the one with the                                                                         X         pij
+most stable direction, i.e. the one with the minimal angle deviation                                        I(vi ) = I0 (vi ) +
+                                                                                                                                                  4
+within its interval.                                                                                                              eij ∈N (vi )
+
+
+                                                                                           with the constant integer valued base index
+Fortunately all necessary coefficients of this heuristic have an in-                                                 0                                   1
+tuitive meaning. Appropriate directions should be stable within a                                                  1 @                     X
+range depending on the target edge length h. Following this obser-                                     I0 (vi ) =     Ad (vi ) +                       κij A
+                                                                                                                  2π
+vation we choose w = h/4. Furthermore in our experiments we                                                                             eij ∈N (vi )
+chose r0 to be the average length of all triangle edges, r1 = h,
+τmin = 0.8 and K = 0.1/bs , where bs is the radius of a bounding                           and Ad (vi ) is the angle defect of vertex vi . Only singularities of
+sphere. In general the quadrangulation result is not very sensitive                        the cross field have a nonzero index which is always a multiple
+w.r.t. these parameters, since similar cross fields can be generated                       of 14 [Ray et al. 2008b], e.g. 14 and − 14 for quadrangulation
+with a large range of different sparse constraints, generated with                         configurations corresponding to valence 3 and 5 respectively.
+slightly different parameters.
+ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+                                                                                                             Mixed-Integer Quadrangulation              •     77:5
+
+
+
+
+                                               vT[ v ] u
+                                                   u0
+                                                     0
+
+
+
+                                                           T
+                                                         
+                                       [ ]
+                                        u1
+                                        v1                     [ ]
+                                                               u2
+                                                               v2
+
+
+              (a)                                 (b)
+
+Figure 3: (a) The three constrained faces (red) are the roots of
+dual spanning trees (green) covering the respective Voronoi cells.
+Each cell contains only one constraint and along all branches of
+the tree zero period jumps can be propagated without changing the
+total smoothness energy. (b) With the angle θ w.r.t. the local ref-
+erence direction (green) the cross field directions uT , vT can be
+extracted and used for the parametrization. In the computation two
+linear scalar functions (u, v) are sought whose gradients are ori-
+ented consistently with the cross field directions.
+                                                                                 Figure 4: Greedy rounding yields a smaller smoothness energy and
+                                                                                 fewer singularities (bottom), whereas the direct rounding produces
+                                                                                 unnecessary singularities and a higher energy (top). Note that these
+4.2    Finding a smooth, interpolating cross field                               are the singularities and the field as they emerge from the solver, no
+                                                                                 singularity optimization has been carried out.
+Equipped with these basic definitions we are ready to formulate
+the optimization problem. Given a mesh M and a subset of faces
+Fc ⊂ F with constrained directions θi = θ̂i , we search for the                  pij = round(2/π(θ̂j − θ̂i − κij )), since pij is only part of a single
+smoothest interpolating cross field, i.e. we want to minimize (1).               quadratic term in (1), which is independent from other variables.
+Accordingly we have to find an integer pij per edge and a real
+valued angle θi per face.                                                        In summary we end up with a mixed-integer problem consisting of
+                                                                                 |F \ Fc | ≈ 2|V | real valued variables θi and |E| − |F \ Fc | ≈ |V |
+                                                                                 integer valued variables pij .
+Reducing the Search Space: Up to here there is a whole space of
+equivalent minimizers to the energy (1). To understand this, assume
+                                                                                 Mixed-Integer Formulation: To apply the greedy mixed-integer
+we have already computed a minimizer which for one triangle pro-
+                                                                                 solver from Section 2 it is sufficient to assemble the system of linear
+vides the angle θ0 and the three period jumps p01 , p02 and p03 . If
+                                                                                 equations by setting the gradient of the energy (1) to zero:
+we now rotate the vector by a multiple of π2 , i.e. set θ̃0 = θ0 + k · π2
+and compensate this change by updating the affected period jumps
+to p̃0i = p0i − k, the smoothness energy is unchanged. We can                           ∂Esmooth                                        π            !
+                                                                                                              X
+repeat this procedure for all free triangles f ∈ F \ Fc . Conse-                                         =           2(θk + κkj +         pkj − θj ) = 0        (2)
+quently the solution can be made unique by fixing one period jump                         ∂θk                                           2
+                                                                                                          ekj ∈N (fi )
+per free triangle to an arbitrary value, e.g. zero, without changing
+                                                                                        ∂Esmooth                                 π            !
+the energy of the minimizer. Care should be taken not to fix edges                                       =     π(θi + κij +        pij − θj ) = 0               (3)
+whose dual path connects two constrained faces, as done in [Ray                           ∂pij                                   2
+et al. 2008b], or closes loops because in these cases the cross field
+curvature along this path would be fixed to an arbitrary value and is            Notice that the values on edges are antisymmetric, i.e. pij = −pji
+not the intended result of the minimizer.                                        and κij = −κji , which can lead to sign changes in equations (2)
+                                                                                 and (3). For all variables which are not fixed, we set up a row and
+A valid set of edges, whose period jumps are allowed to be set to                assemble all of them into a single matrix. After applying our greedy
+zero, can be found by constructing a forest of Dijkstra trees of the             mixed-integer solver, the result is a smooth cross field where the in-
+dual mesh as shown in Figure 3. Each constrained face in Fc is the               teger valued period jumps define type and position of all singulari-
+root of a separate tree such that no tree connects constrained faces.            ties. Figure 4 compares the result of our greedy solver with that of a
+The number of fixed edges is exactly |F \ Fc | since starting from               direct rounding, where red and blue spheres represent singularities
+the constrained faces each other face of the mesh is conquered by                with negative and positive index respectively.
+adding a single edge. Notice that no dual loop can be closed by a
+tree structure, such that we end up with a valid set of edges which              In practice we observed that some singularity positions, especially
+can be fixed to zero period jumps without changing the energy of                 those in flat regions, can sometimes be improved by a local search
+the minimizer.                                                                   algorithm, as described in the next section.
+
+Obviously there are many other valid sets of edges which could be                Local Search Singularity Optimization: In a postprocess we op-
+fixed. The reason why we use trees living in the discrete Voronoi                tionally check for each singularity, if the energy can be decreased
+cells of the corresponding constrained faces is that this choice min-            by moving it to a neighboring vertex. Moving a singularity along
+imizes the length of a path to its corresponding constraint and so               an edge eij means changing the corresponding period jump pij .
+improves the accuracy of the greedy mixed-integer solver.                        Notice, that by this operation only the right-hand-side of the linear
+                                                                                 system is changed. Consequently we can precalculate the sparse
+Additionally to the period jumps on tree edges each period jump                  Cholesky factorization of this matrix once and then compute solu-
+between two adjacent constrained faces fi and fj can be fixed to                 tions for different right-hand-sides efficiently [Botsch et al. 2005].
+                                                                            ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+77:6      •      D. Bommes et al.
+
+                                                                                           At the end of the two cutting steps we have a triangle mesh patch
+                                                                                           where all the singularities are located at the boundary. If a sin-
+                                                                                           gularity is not a leaf node of the cut graph then it appears several
+                                                                                           times along the boundary. In order to compute a parametrization we
+                                          p
+                                                                                           have to find a planar embedding of this boundary polygon as well
+                                                                                           as all the interior vertices. The location of the mesh vertices in the
+                                                                                           parameter domain is computed by minimizing Eorient , however,
+                                                                                           there are a number of consistency constraints that have to be taken
+                                                                                           into account.
+                            (a)                                        (b)                 Integer location of singularities: By allowing a singularity to be
+                                                                                           in general position, it would cause an n-sided face instead of a
+Figure 5: (a) By placing a cut to a cone singularity p (here of index                      valence-n vertex. Therefore to guarantee a pure quadrangulation,
+1
+4
+  ) a distortion free unfolding of the patch is possible. (b) The upper                    we have to snap all singularities to integer locations in the param-
+image shows two directions of the cross field. In the lower image                          eter domain. This means that the overall parametrization task is
+the mesh is cut into disk topology along the green edges, such that                        now a mixed-integer problem which we solve by our mixed-integer
+these directions can be consistently oriented on each side of the cut.                     greedy solver from Section 2.
+                                                                                           Cross boundary compatibility: In order to avoid visible seams
+5      Global Parametrization                                                              across the cut paths on the surface we have to make sure that the
+                                                                                           quad structure on both sides of a cut edge is compatible. This is
+We now compute a global parametrization, i.e., a map from the                              guaranteed by allowing only a grid automorphism as a transition
+given mesh M to some disk-shaped parameter domain Ω ∈ R2 .                                 function. This requires that the (u, v) parameter values on both
+Since the parametrization should be piecewise linear, it is sufficient                     sides of a cut edge are related by
+to assign a (u, v) parameter value to each vertex — more precisely
+to each triangle corner — in the mesh.                                                                        (u0 , v 0 ) = Roti90 (u, v) + (j, k)
+
+The parametrization should be locally oriented according to the op-                        with integer coefficients (i, j, k).
+timized cross field from Section 4 which implies that the gradients
+                                                                                           The rotation coefficient in the transition functions can easily be
+of the piecewise linear scalar fields u and v defined on the mesh M
+                                                                                           computed by propagating a globally consistent orientation in the
+should minimize the local orientation energy
+                                                                                           cross field, as illustrated in Figure 5 . Since after the cutting, all
+               ET = kh∇u − uT k2 + kh∇v − vT k2                                            interior vertices of the mesh are regular, we can start at a random
+                                                                                           face and propagate its orientation in a breadth first manner to all
+for each triangle T . Here h is a global scaling parameter which                           the neighboring faces. This will establish a zero-rotation across all
+controls the edge length of the resulting quad mesh. The vectors uT                        inner edges. The rotations Roti90 across the cut edges can be found
+and vT are two orthogonal vectors in T corresponding to the cross                          by simply comparing the orientations in neighboring faces.
+field directions θ and θ + π/2. Since the cross field is defined only
+                                                                                           After fixing the rotations, the cross boundary compatibility condi-
+up to rotations by π/2 we will have to specify which of the four
+                                                                                           tions can be incorporated into the optimization scheme as linear
+possibilities we are picking in each triangle such that the proper
+                                                                                           constraints. Therefore for each cut edge e = p q we introduce two
+compatibility conditions are satisfied across each edge in the mesh.
+                                                                                           integer variables je , ke to formulate the four compatibility condi-
+The global orientation energy is then defined as the integral of ET                        tions:
+over the entire mesh M
+                   Z                                                                                    (u0p , vp0 )   =   Roti90
+                                                                                                                                e
+                                                                                                                                  (up , vp ) + (je , ke )
+                                     X
+      Eorient =        ET dA =            ET area(T ).           (4)                                    (u0q , vq0 )   =   Roti90
+                                                                                                                                e
+                                                                                                                                  (uq , vq ) + (je , ke )
+                        M                   T ∈M
+                                                                                           Hence, in total we add two integer variables and eliminate four con-
+The minimizer of this quadratic functional is obtained by solving                          tinuous variables per cut edge.
+the sparse linear system which sets all the partial derivatives of
+Eorient to zero.                                                                           Applying our mixed-integer greedy solver to this parametrization
+                                                                                           task can be understood in an intuitive way. After computing an
+Cutting the mesh: In order to be able to compute a proper                                  all-continuous solution, which corresponds to the unconstrained
+parametrization minimizing Eorient we have to cut open the mesh                            parametrization, we iteratively snap the singularities to integer lo-
+M, such that we obtain a patch that is topologically equivalent to a                       cations.
+disk. An additional requirement is that all singular vertices must lie
+on the cut, i.e. at the boundary of the parameter domain. The rea-                         5.1   Anisotropic Norm
+son is that the angle defect of a singularity cannot be represented by
+an inner vertex of the parametrization as depicted in Figure 5. We
+                                                                                           In practice exact orientation is often more important than exact edge
+compute an appropriate cut graph in two steps.
+                                                                                           length. The reason is that changing the orientation along a highly
+First we start from a random triangle and grow a topological disk                          curved feature line, the quadrangulation quality will drop off dra-
+by constructing a dual spanning tree. Thus the primal of all non                           matically due to normal noise. The orientation can be improved
+spanning tree edges is already a cut graph which transforms M                              by less penalizing stretch which is in the direction of the desired
+into disk topology. The size of this cut graph can be significantly                        iso-lines. This can be achieved by an anisotropic norm
+reduced by iteratively removing all open paths.
+                                                                                                                  k(u, v)k2(α,β) = αu2 + βv 2
+In the second step paths connecting each singularity to the cut graph
+are added. This can be done by successively applying Dijkstra’s                            which penalizes the deviation along the major directions with dif-
+shortest path algorithm.                                                                   ferent weights. Notice, such a diagonal metric is sufficient since we
+ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+                                                                                                           Mixed-Integer Quadrangulation                  •   77:7
+
+
+
+
+          (a)                     (b)                     (c)
+                                                                                            (a)                        (b)                          (c)
+Figure 6: The parametrization in (a) is not aligned to the sharp
+edges of the object. Using the anisotropic norm the quads are al-               Figure 7: In (a) the minimized orientation energy produces flipped
+lowed to stretch in order to better align with a given input field              triangles, which can be removed by local stiffening (b). The chosen
+as shown in (b). In (c) alignment constraints have been imposed,                weighting is shown in (c) and decreases from orange to blue.
+leading to perfectly preserved features.
+
+
+                                                                                prescribed by linear constraints. Movements are performed if the
+use (uT , vT ) as the local coordinate frame in each triangle.
+                                                                                overall quality improves, i.e. the energy (4) decreases.
+         ET = kh∇u − uT k2(γ,1) + kh∇v − vT k2(1,γ)                             The obvious drawback of this singularity relocation is its heavy
+                                                                                computational cost. Fortunately in all of our examples the initial
+with γ ≤ 1. Figure 6 (b) shows an example, where the orientation                singularity positions were already sufficient. However, coarsely
+of the parametrization is improved by using the anisotropic norm.               quadrangulating meshes with fine details will require singularity
+                                                                                relocation.
+5.2   Feature Line Alignment
+
+Sharp feature lines of the input mesh should be preserved in the
+                                                                                5.4    Local Stiffening
+quadrangulation. Given a subset S ⊂ E of triangle mesh edges, the
+necessary alignment conditions can be incorporated in a straight-               The parametrization is the result of a quadratic energy minimiza-
+forward way. First of all, alignment requires correct orientation.              tion. Thus despite the global optimum, for a few triangles it might
+Therefore, while computing the cross field, all edges in S are used             happen that the metric distortion gets very high or even worse, that
+as orientational constraints in both adjacent triangles. Additionally           the orientation of a mapped triangle flips. Figure 7 shows an ex-
+to the correct orientation for alignment, a constant integer coordi-            ample where such a problem occurs in the vicinity of a singularity.
+nate along the edge is necessary, which guarantees that this edge is            The idea of local stiffening is to add an adapted triangle weighting
+preserved in the quadrangulation. Each alignment condition for an               w(T ) into the energy formulation to penalize high local distortions,
+edge p q can be formulated independently. If the cross field direc-             yielding:
+                                                                                                             X
+tion uT is already oriented along the alignment edge, we end up                                Eorient =            w(T ) ET area(T )
+with a simple condition for the v parameter values                                                               T ∈M
+
+                         v p = vq ∈ Z                                           This weighting, which is initialized to one, can be updated it-
+                                                                                eratively, as described in the following, until the quality of the
+which ensures that p q is mapped to an integer valued iso-line. The             parametrization is sufficient.
+u = const case is handled analogously. Consequently, for each
+alignment edge a single variable can be eliminated and the remain-              The metric distortion is characterized by the singular values σ1 and
+ing integer variables can be handled by the greedy mixed-integer                σ2 of the Jacobi matrix as described in [Hormann et al. 2007]. Fur-
+solver. Figure 6 (c) shows an example, where all feature edges are              thermore to penalize flips we evaluate the orientation of a triangle
+aligned.                                                                                                           »                           –
+                                                                                                                       u1 − u0 , u2 − u0
+Notice that for meshes with boundaries we can exploit the presented                               τ = sign(det                                  )
+                                                                                                                       v1 − v0 , v2 − v0
+alignment functionality to guarantee that the boundaries are pre-
+served in the quadrangulation and thus prevent jagged boundary
+lines (see Figure 9).                                                           where (ui , vi ) are the vertex parameter coordinates in counter-
+                                                                                clockwise ordering. We measure the local distortion of each tri-
+                                                                                angle by
+5.3   Singularity Relocation                                                                               σ1           σ2
+                                                                                                    λ = |τ    − 1| + |τ    − 1|
+                                                                                                           h            h
+By computing a parameterization with the given target edge length
+h , new requirements have to be taken into account which cannot                 which respects the edge length h. Finally, we update the weight
+be anticipated by the cross field computation, since it is indepen-             of a triangle by evaluating a uniform Laplacian defined on the dual
+dent from h. Examples are singularities which are too close to each             mesh
+other, a boundary or a given alignment edge. Other aspects are sym-                          w(T ) ← w(T ) + min{c · |4λ(T )|, d}
+metries which are irrelevant for a smooth cross field, but important
+for a quadrangulation. Therefore, to achieve maximal quality it can             with the proportionality constant c and a maximal allowed update of
+be necessary to relocate the singularties w.r.t. the requirements of            d, which we chose as c = 1 and d = 5 in all our examples. Notice
+the parameterization. This can be done with a local search algo-                that directly using the distortion instead of the Laplacian wouldn’t
+rithm similar to Section 4.2. Depending on how much time is avail-              be a good idea. The reason is that the weighting would reflect the
+able we can restrict the search to the best local candidate, i.e. the           global stretch distribution, which is necessary for a globally consis-
+closest neighbor in the parametrization, or evaluate the quality of             tent quadrangulation, instead of the desired local distortions. Sub-
+all neighbors. In each step it is necessary to recompute the smooth             sequently, we increase the smoothness of the weighting field w(T )
+cross field w.r.t. the relocated singularity as well as the parametriza-        by a few uniform smoothing steps, which in general leads to nicer
+tion. In the cross field computation the cross field indices are now            quadrangulations.
+                                                                           ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+77:8      •         D. Bommes et al.
+
+
+
+
+              (a)                        (b)                       (c)
+
+Figure 8: The presented algorithm is robust w.r.t. bad triangles (a)
+and can produce meaningful singularities in the presence of noise
+(b) and on smooth offset geometries (c).
+
+
+
+
+Figure 9: Quadrangulation of the B EETLE model having 11                                   Figure 10: A comparison between the technique described in
+boundaries. On the right the parametrization is shown. Naturally,                          this paper (left) and the QuadCover approach by [Kälberer et al.
+due to the occurrence of − 14 singularities, parts of the flattening                       2007] (right) for a sharp object (FANDISK) and a smooth object
+are overlapping.                                                                           (B OTIJO). In both comparisons the same target edge length and the
+                                                                                           same cross field generated by our mixed-integer formulation were
+                                                                                           used.
+6      Comparisons and Results
+The backbone of our approach is the mixed-integer solver intro-
+duced in Section 2, which is used for the computation of both the
+smooth cross field and the parametrization. Although it is often
+necessary to round tens of thousands of variables for the cross field
+computation, the timings in Table 1 show that this can be done effi-
+ciently using the proposed solver.
+The example in Figure 4 shows that the greedy rounding leads to a
+significantly smoother cross field with less singularities compared
+to the direct rounding approach. All our experiments confirmed this
+behavior.
+A comparison between our approach and QuadCover [Kälberer
+et al. 2007] is carried out in Figure 10. In both examples the same
+input cross field and target edge length have been used. The FAN -
+DISK comparison clearly shows the benefit of alignment on mod-
+els with sharp feature edges, while the limitations of direct round-
+ing are especially noticeable on the B OTIJO. On complex objects
+having many singularities or when remeshing with very coarse tar-
+get edge length the direct rounding generates many ”twists” and
+non-injectivities in the parametrization, such that the extraction of
+a hole-free quad mesh is not always possible. However, the combi-
+nation of greedy rounding and local stiffening allow us to automat-
+ically generate consistent, hole-free quadrangulations at almost any                       Figure 11: ROCKER A RM comparison between the technique de-
+resolution and with significantly less ”twists”.                                           scribed in this paper (top) and the spectral quadrangulation ap-
+                                                                                           proach by [Huang et al. 2008] (bottom). The upper mesh has 9413
+The spectral approach [Huang et al. 2008] also produces oriented                           faces and 36 singularities, the lower one has 9400 faces and 26
+and aligned parametrizations with few singularities, however the                           singularities.
+Morse-Smale Complex sometimes fails to capture the detailed
+structure of the surface. This can lead to an unfavorable stretch
+ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+                                                                                              Mixed-Integer Quadrangulation               •     77:9
+
+
+
+
+                                                                   Table 1: Statistics of the Greedy Mixed-Integer Solver used for
+                                                                   computing the cross field (Section 4) and the parametrization (Sec-
+                                                                   tion 5). Dim refers to the initial dimension of the linear system, #Int
+                                                                   is the number of integer variables, #IS and #DS is the number of
+                          F ERTILITY                               calls to iterative and direct solvers respectively. Time is the total
+                                                                   time for the solution. Due to the global nature of the parametriza-
+                                                                   tion, the local and iterative search seldom lead to a gain of effi-
+                                                                   ciency and therefore Time refers solely to the direct solver.
+
+
+                                                                   of the quads affecting the angle as well as the edge length distribu-
+                        ROCKER ARM                                 tion. A comparison between [Huang et al. 2008] and our approach
+                                                                   can be found in Figure 11.
+                                                                   Quadrangulations computed by our technique typically have an-
+                                                                   gle distributions with a sharp peak around 90◦ and an edge length
+                                                                   distribution centered around the target edge length. However, for
+                                                                   aligned meshes, like the FANSIDK in Figure 10, further peaks,
+                                                                   which reflect the unavoidable stretch may occur in the edge length
+                                                                   histogram.
+                                                                   The geometrically complex examples shown in Figure 12 underline
+                                                                   the ability of our method to compute coarse, oriented quadrangula-
+                                                                   tions with naturally placed singularities.
+                                                                   All examples were computed on a 3.0GHz standard PC, the statis-
+                                                                   tics are shown Table 1. Interestingly the cross field computation is
+                                                                   less demanding to compute than the parametrization, even though
+                                                                   it requires practically two orders of magnitude more roundings.
+                                                                   This effect is due to the locality of the cross field energy (Equation
+                                                                   (1)). Rounding a period jump mainly affects a local neighborhood
+                                                                   on the mesh and the solution can be efficiently updated by local
+                                                                   Gauss-Seidel iterations. Whereas, rounding a corner point in the
+                                                                   parametrization domain usually has global impact. Motivated by
+                                                                   this observation and the typically low number of integer variables
+                                                                   for the parametrization, we restricted the greedy solver to sparse
+                                                                   Cholesky updates.
+                                                                   Finally Figure 8 demonstrates the robustness of the mixed-integer
+                                                                   quadrangulation approach w.r.t. different (degenerate) representa-
+                                                                   tions of a given object. The mesh in Figure 8 (a) contains almost
+                            L EVER                                 1000 triangles with vanishing area (the close-up shows a part of
+                                                                   the mesh where about 8 triangles are nearly colinear), the model in
+                                                                   Figure 8 (b) has been subjected to normal noise with a magnitude
+                                                                   of 0.3% of the bounding box diagonal and the right most model
+                                                                   (Figure 8 (c) ) was offset, yielding a mesh without sharp corners.
+                                                                   These fandisks and most of the other triangle meshes used in this
+                                                                   work (along with the extracted quad meshes) can be found in the
+                                                                   supplementary material of this paper.
+
+                                                                   7    Conclusion and Future Work
+                                                                   We have presented a complete quadrangulation method which starts
+                                                                   with a pre-process that finds reliable orientation constraints. Based
+                                                                   on these, possibly sparsely distributed, constraints we compute a
+                                                                   smooth cross field on the surface. The global optimization produces
+                                                                   a set of singularities that are automatically placed at geometrically
+                           B OTIJO
+                                                                   meaningful locations. The cross field is used as input for a global
+Figure 12: Results of our Mixed-Integer Quadrangulation ap-   ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+proach
+77:10       •     D. Bommes et al.
+
+parametrization technique which cuts the surface open into a disk-                         F LOUDAS , C. A. 1995. Nonlinear and Mixed-Integer Optimization
+like patch and then computes a planar embedding which takes ori-                              Fundamentals and Applications. Hardback.
+entation, alignment, as well as boundary compatibility constraints
+into account.                                                                              G ORRY, G., S HAPIRO , J., AND W OLSEY, L. 1970. Relax-
+                                                                                              ation methods for pure and mixed integer programming prob-
+In the future we would like to integrate both parts of the algo-                              lems. Cambridge, M.I.T., Cambridge.
+rithm into a single optimization scheme. Instead of making the
+                                                                                           H ERTZMANN , A., AND Z ORIN , D. 2000. Illustrating smooth sur-
+parametrization smooth by least squares approximation of a smooth
+                                                                                              faces. In SIGGRAPH ’00: Proceedings of the 27th annual con-
+cross field it would be more natural to smooth the parametrization
+                                                                                              ference on Computer graphics and interactive techniques, ACM
+directly. However this would most probably lead to a non-linear
+                                                                                              Press/Addison-Wesley Publishing Co., New York, NY, USA,
+optimization.
+                                                                                              517–526.
+One limitation of our method is that for coarse quadrangulations of                        H ILDEBRANDT, K., P OLTHIER , K., AND WARDETZKY, M. 2005.
+highly complex models with many cross field singularities, the local                          Smooth feature lines on surface meshes. In SGP ’05: Proceed-
+singularity relocation in the parametrization step is dominating the                          ings of the third Eurographics symposium on Geometry pro-
+overall computation time. Here we would like to develop a more                                cessing, Eurographics Association, Aire-la-Ville, Switzerland,
+global search strategy.                                                                       Switzerland, 85.
+                                                                                           H ORMANN , K., L ÉVY, B., AND S HEFFER , A. 2007. Mesh pa-
+Acknowledgements                                                                              rameterization: theory and practice. In SIGGRAPH ’07: ACM
+                                                                                              SIGGRAPH 2007 courses, 1.
+This work has been supported by the UMIC Research Cen-
+tre, RWTH Aachen University. We would like to thank Fe-                                    H UANG , J., Z HANG , M., M A , J., L IU , X., KOBBELT, L., AND
+lix Kälberer and Matthias Nieser for their helpful support,                                  BAO , H. 2008. Spectral quadrangulation with orientation and
+Tamal Dey, Muyang Zhang, AIM@SHAPE and Carlos Hernández                                      alignment control. ACM Trans. Graph. 27, 5, 1–9.
+(www.tsi.enst.fr/3dmodels) for providing us with datasets, Jan                             K ÄLBERER , F., N IESER , M., AND P OLTHIER , K. 2007. Quad-
+Möbius for the geometry processing framework OpenFlipper.org                                 cover - surface parameterization using branched coverings. Com-
+and the reviewers for their competent and helpful comments.                                   puter Graphics Forum 26, 3 (Sept.), 375–384.
+                                                                                           K HAREVYCH , L., S PRINGBORN , B., AND S CHR ÖDER , P. 2006.
+References                                                                                    Discrete conformal mappings via circle patterns. ACM Trans.
+                                                                                              Graph. 25, 2, 412–438.
+A LLIEZ , P., C OHEN -S TEINER , D., D EVILLERS , O., L EVY, B.,
+   AND D ESBRUN , M. 2003. Anisotropic polygonal remeshing.                                L AI , Y.-K., KOBBELT, L., AND H U , S.-M. 2008. An incremen-
+   ACM Trans. Graph. 22, 3, 485–493.                                                          tal approach to feature aligned quad dominant remeshing. In
+                                                                                              SPM ’08: Proceedings of the 2008 ACM symposium on Solid
+A LLIEZ , P., U CELLI , G., G OTSMAN , C., AND ATTENE , M. 2005.                              and physical modeling, 137–145.
+   Recent advances in remeshing of surfaces. Research report,
+   AIM@SHAPE Network of Excellence.                                                        M ARINOV, M., AND KOBBELT, L. 2004. Direct anisotropic quad-
+                                                                                             dominant remeshing. In PG ’04: Proceedings of the Computer
+B EN -C HEN , M IRELA , G OTSMAN , C RAIG , B UNIN , AND G UY.                               Graphics and Applications, 12th Pacific Conference, IEEE Com-
+   2008. Conformal flattening by curvature prescription and metric                           puter Society, Washington, DC, USA, 207–216.
+   scaling. Computer Graphics Forum 27, 2 (April), 449–458.
+                                                                                           R AY, N., L I , W. C., L ÉVY, B., S HEFFER , A., AND A LLIEZ , P.
+B OMMES , D., VOSSEMER , T., AND KOBBELT, L. 2009. Quadran-                                   2006. Periodic global parameterization. ACM Trans. Graph. 25,
+   gular parameterization for reverse engineering. Lecture Notes in                           4, 1460–1485.
+   Computer Science, to appear.
+                                                                                           R AY, N., VALLET, B., A LONSO , L., AND L ÉVY, B. 2008. Ge-
+B OTSCH , M., B OMMES , D., AND KOBBELT, L. 2005. Efficient                                   ometry aware direction field design. Tech. rep., INRIA - ALICE
+   linear system solvers for mesh processing. In IMA Conference on                            Project Team. Accepted pending revisions.
+   the Mathematics of Surfaces, Springer, R. R. Martin, H. E. Bez,                         R AY, N., VALLET, B., L I , W. C., AND L ÉVY, B. 2008. N-
+   and M. A. Sabin, Eds., vol. 3604 of Lecture Notes in Computer                              symmetry direction field design. ACM Trans. Graph. 27, 2, 1–13.
+   Science, 62–83.
+                                                                                           S PRINGBORN , B., S CHR ÖDER , P., AND P INKALL , U. 2008. Con-
+C HEN , Y., DAVIS , T. A., H AGER , W. W., AND R AJAMANICKAM ,                                formal equivalence of triangle meshes. In SIGGRAPH ’08: ACM
+   S. 2006. Algorithm 8xx: Cholmod, supernodal sparse cholesky                                SIGGRAPH 2008 papers, 1–11.
+   factorization and update/downdate. Technical Report TR-2006-
+   005, University of Florida.                                                             T ONG , Y., A LLIEZ , P., C OHEN -S TEINER , D., AND D ESBRUN ,
+                                                                                              M. 2006. Designing quadrangulations with discrete harmonic
+C OHEN -S TEINER , D., AND M ORVAN , J.-M. 2003. Restricted                                   forms. In Proc. SGP, Eurographics Association, 201–210.
+   delaunay triangulations and normal cycle. In SCG ’03: Pro-
+   ceedings of the nineteenth annual symposium on Computational                            Z HANG , E., M ISCHAIKOW, K., AND T URK , G. 2006. Vector field
+   geometry, 312–321.                                                                         design on surfaces. ACM Trans. Graph. 25, 4, 1294–1326.
+
+D ONG , S., B REMER , P.-T., G ARLAND , M., PASCUCCI , V., AND
+   H ART, J. C. 2006. Spectral surface quadrangulation. In SIG-
+   GRAPH ’06: ACM SIGGRAPH 2006 Papers, 1057–1066.
+F ISHER , M., S CHR ÖDER , P., D ESBRUN , M., AND H OPPE , H.
+   2007. Design of tangent vector fields. ACM TOG 26, 3, 56.
+ACM Transactions on Graphics, Vol. 28, No. 3, Article 77, Publication date: August 2009.
+

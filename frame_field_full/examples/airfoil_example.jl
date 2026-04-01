@@ -6,9 +6,11 @@ using FrameFieldFull.Analysis
 using FrameFieldFull.MeshIO
 using FrameFieldFull.Cutting
 using FrameFieldFull.Plotting
+using FrameFieldFull.Plotting: plot_panel_quads!
 using FrameFieldFull.Parameterization
 using LinearAlgebra
 using Printf
+using CairoMakie
 
 
 
@@ -269,11 +271,29 @@ function main()
     # 6. Visualization
     @info("Visualizing Parametrization...")
     
-    plot_extracted_quads(quad_mesh.vertices, quad_mesh.quads, 
-                            "output/airfoil_final_quads_3d.png"; 
-                            topo=topo, verbose=true)
-                  
-    @info("Pipeline Complete!")
+    # Create visualization using available plotting functions
+    fig = Figure(size=(1200, 800))
+    
+    # Plot the original mesh and extracted quads
+    ax1 = Axis(fig[1, 1], title="Original Triangle Mesh", aspect=DataAspect())
+    ax2 = Axis(fig[1, 2], title="Extracted Quad Mesh", aspect=DataAspect())
+    
+    # Plot original triangles
+    for tri in topo.faces
+        pts = [topo.vertices[i] for i in tri]
+        lines!(ax1, [p.x for p in pts], [p.y for p in pts], color=:gray, linewidth=0.5)
+    end
+    
+    # Plot extracted quads
+    plot_panel_quads!(ax2, quad_mesh; topo=topo)
+    
+    # Save and display
+    mkpath("output")
+    save("output/airfoil_final_quads.png", fig)
+    display(fig)
+    
+    @info("Visualization saved to output/airfoil_final_quads.png")
+    @info("Pipeline Complete! Extracted $(length(quad_mesh.quads)) quads from $(length(topo.faces)) triangles.")
 end
 
 main()
